@@ -14,6 +14,8 @@ Run:      python planes/sky.py   (run.sh starts it when config.json says "frame"
 
 import argparse
 import calendar
+import csv
+import io
 import json
 import math
 import os
@@ -132,10 +134,10 @@ def build(data, t):
 
     # The space stations, and the newest Starlink launch while it's still a train of
     # lights (the sample carries only that group); every other satellite was clutter
-    tle = data["tle"]
-    sats = kept("sats", t, tle, 86400, lambda: {
-        "stations": [(n, s) for n, s in astro.read_tles(tle) if n.startswith(("ISS", "CSS"))],
-        "fleet": [s for n, s in astro.read_tles(tle) if n.startswith("STARLINK")]})
+    orbits = data.get("orbits") or data.get("tle", "")
+    sats = kept("sats", t, orbits, 86400, lambda: {
+        "stations": [(n, s) for n, s in astro.read_orbits(orbits) if n.startswith(("ISS", "CSS"))],
+        "fleet": [s for n, s in astro.read_orbits(orbits) if n.startswith("STARLINK")]})
     for name, sat in sats["stations"]:
         look = astro.sat_look(sat, t, lat, lon)
         if look and look[0] >= 10:
@@ -143,9 +145,9 @@ def build(data, t):
                      el=look[0], az=look[1], km=look[2], lit=look[4]))
     iss = next((s for n, s in sats["stations"] if n.startswith("ISS")), None)
     # Pass searches are the costly part: redo them every half hour or once a pass is over
-    sky["pass"] = kept("pass", t, tle, 1800, lambda: astro.next_visible_pass(iss, t, lat, lon) if iss else None,
+    sky["pass"] = kept("pass", t, orbits, 1800, lambda: astro.next_visible_pass(iss, t, lat, lon) if iss else None,
                        ends=lambda ps: ps["set"])
-    sky["train"] = tr = kept("train", t, tle, 600, lambda: train_pass(sats["fleet"], t, lat, lon),
+    sky["train"] = tr = kept("train", t, orbits, 600, lambda: train_pass(sats["fleet"], t, lat, lon),
                              ends=lambda tr: tr["end"])
     if tr and tr["start"] - 60 <= t <= tr["end"] and sky["sun_el"] < -6:
         # Only while a train is crossing is it worth placing each satellite
@@ -690,54 +692,49 @@ PANEL_W = 450
 
 # ---------- live data ----------
 
-CELESTRAK = "https://celestrak.org/NORAD/elements/gp.php?GROUP=%s&FORMAT=tle"
+CELESTRAK = "https://celestrak.org/NORAD/elements/gp.php?GROUP=%s&FORMAT=csv"
 SONDEHUB = "https://api.v2.sondehub.org/sondes?lat=%.4f&lon=%.4f&distance=250000&last=1800"
-TLE_PATH = os.path.join(HERE, "tle.txt")
+ORBITS_PATH = os.path.join(HERE, "orbits.csv")
 BALLOON_PATH = os.path.join(HERE, "balloon.json")
-TLE_MAX_AGE = 20 * 3600   # CelesTrak asks for no more than one download every 2 hours
-TLE_RETRY_S = 3 * 3600    # after a failed download, keep the old orbits (good for days)
-TRAIN_DAYS = 12           # a launch still reads as a train of lights for a week or two
+ORBITS_MAX_AGE = 20 * 3600    # CelesTrak asks for no more than one download every 2 hours
+ORBITS_RETRY_S = 3 * 3600     # after a failed download, keep the old orbits (good for days)
 # Radiosondes go up at 00 and 12 UTC everywhere (11:00 and 23:00 by the clock at Buffalo);
 # a flight is up about two hours, then falls
 BALLOON_WINDOWS = ((10.75, 14.0), (22.75, 26.0))
 QUIET_FETCH_S = 900
 
 
-def tle_epoch(line1):
-    yy, day = int(line1[18:20]), float(line1[20:32])
-    return calendar.timegm((2000 + yy if yy < 57 else 1900 + yy, 1, 1, 0, 0, 0)) + (day - 1) * 86400
-
-
-def trios(text):
-    rows = [r.rstrip() for r in text.splitlines() if r.strip()]
-    return [rows[i:i + 3] for i in range(0, len(rows) - 2, 3)
-            if rows[i + 1].startswith("1 ") and rows[i + 2].startswith("2 ")]
-
-
-def fetch_tles(session, now):
-    """The space stations, and the newest Starlink launch while it's still young enough to
-    be a train. Launches from the last 30 days rather than the whole Starlink fleet: a few
-    hundred objects instead of ten thousand, and every train is in it."""
+def fetch_orbits(session, now):
+    """The space stations, and the newest Starlink launch of the last 30 days: the one most
+    likely to still be a train of lights. A few hundred objects instead of the whole fleet's
+    ten thousand. CSV (OMM), not TLE: CelesTrak has no TLEs past catalog number 99999, which
+    every launch since mid-2026 is. train_pass() decides whether it still looks like a train."""
     got = {}
     for group in ("stations", "last-30-days"):
         r = session.get(CELESTRAK % group, timeout=30)
         r.raise_for_status()
-        got[group] = trios(r.text)
-    keep = [t for t in got["stations"] if t[0].strip() in ("ISS (ZARYA)", "CSS (TIANHE)")]
+        if not r.text.startswith("OBJECT_NAME"):
+            raise ValueError("not CelesTrak CSV: %r" % r.text[:60])
+        got[group] = list(csv.DictReader(io.StringIO(r.text)))
+    keep = [row for row in got["stations"] if row["OBJECT_NAME"] in ("ISS (ZARYA)", "CSS (TIANHE)")]
     if not keep:
         raise ValueError("no ISS in CelesTrak's stations")
-    starlink = [t for t in got["last-30-days"] if t[0].startswith("STARLINK")]
+    starlink = [row for row in got["last-30-days"] if row["OBJECT_NAME"].startswith("STARLINK")]
     if starlink:
-        # International designator: launch year and number, e.g. 26159 = the 159th of 2026
-        newest = max(t[1][9:14] for t in starlink)
-        group = [t for t in starlink if t[1][9:14] == newest]
-        if now - min(tle_epoch(t[1]) for t in group) < TRAIN_DAYS * 86400:
-            keep += group
-    text = "\n".join(line for trio in keep for line in trio) + "\n"
+        # OBJECT_ID is the launch: 2026-159A is the first object of 2026's 159th
+        newest = max(row["OBJECT_ID"][:8] for row in starlink)
+        keep += [row for row in starlink if row["OBJECT_ID"][:8] == newest]
+    out = io.StringIO()
+    w = csv.DictWriter(out, fieldnames=list(got["stations"][0]), lineterminator="\n")
+    w.writeheader()
+    w.writerows(keep)
+    text = out.getvalue()
+    if not any(name.startswith("ISS") for name, _ in astro.read_orbits(text)):
+        raise ValueError("CelesTrak's ISS row doesn't parse")
     try:
-        with open(TLE_PATH + ".tmp", "w") as f:
+        with open(ORBITS_PATH + ".tmp", "w") as f:
             f.write(text)
-        os.replace(TLE_PATH + ".tmp", TLE_PATH)
+        os.replace(ORBITS_PATH + ".tmp", ORBITS_PATH)
     except OSError:
         pass  # Drive Mode: keep them in memory, the next download saves them
     return text
@@ -780,12 +777,12 @@ class Frame:
         self.args, self.log, self.fetch_log = args, {}, {}
         self.raw, self.sky = [], {}
         try:
-            with open(TLE_PATH) as f:
-                self.tle = f.read()
-            self.tle_at = os.path.getmtime(TLE_PATH)
+            with open(ORBITS_PATH) as f:
+                self.orbits = f.read()
+            self.orbits_at = os.path.getmtime(ORBITS_PATH)
         except OSError:
-            self.tle, self.tle_at = "", 0
-        self.tle_tried = 0
+            self.orbits, self.orbits_at = "", 0
+        self.orbits_tried = 0
         try:
             with open(BALLOON_PATH) as f:
                 self.balloon = json.load(f)
@@ -801,13 +798,13 @@ class Frame:
         """Planes every time; orbits when a day old; the balloon only around launches.
         The extras never fail the fetch: the planes are what the loop's backoff is for."""
         self.fetch_log = {}
-        if now - self.tle_at > TLE_MAX_AGE and now - self.tle_tried > TLE_RETRY_S:
-            self.tle_tried = now
+        if now - self.orbits_at > ORBITS_MAX_AGE and now - self.orbits_tried > ORBITS_RETRY_S:
+            self.orbits_tried = now
             try:
-                self.tle, self.tle_at = fetch_tles(session, now), now
-                self.fetch_log["tle"] = 1
-            except (requests.RequestException, ValueError) as e:
-                print("tle fetch failed: %r" % e, flush=True)
+                self.orbits, self.orbits_at = fetch_orbits(session, now), now
+                self.fetch_log["orbits"] = 1
+            except (requests.RequestException, ValueError, KeyError) as e:
+                print("orbits fetch failed: %r" % e, flush=True)
         if in_balloon_window(now) or self.balloon:
             try:
                 self.balloon = fetch_balloon(session, now, self.balloon)
@@ -822,7 +819,7 @@ class Frame:
                 json.dump(self.data(now), f)
 
     def data(self, now):
-        return {"time": now, "planes": P.project(self.raw, now), "tle": self.tle, "balloon": self.balloon}
+        return {"time": now, "planes": P.project(self.raw, now), "orbits": self.orbits, "balloon": self.balloon}
 
     def fetch_every(self, now):
         if self.balloon or in_balloon_window(now):
@@ -859,7 +856,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true", help="render one frame and exit")
     ap.add_argument("--out", help="write PNG here instead of pushing to the screen")
-    ap.add_argument("--sample", help="render from a saved {time, planes, tle, balloon} JSON instead of the network")
+    ap.add_argument("--sample", help="render from a saved {time, planes, orbits or tle, balloon} JSON instead of the network")
     ap.add_argument("--save-sample", help="also write the fetched data to this JSON (for design testing)")
     ap.add_argument("--time", type=float, help="with --sample: unix time to render instead of the sample's")
     ap.add_argument("--heading", type=float, help="compass direction the viewer faces (0-359)")

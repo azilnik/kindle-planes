@@ -5,6 +5,7 @@ Keplerian elements for planets): good to a fraction of a degree, which is a few 
 on the dome. Satellites use sgp4, which falls back to pure Python without its C module.
 """
 
+import io
 import math
 import os
 import sys
@@ -12,6 +13,7 @@ import sys
 # sgp4 is vendored as its pure-Python modules (MIT, vendor/sgp4/LICENSE): the Kindle's
 # Python has no compiler for its C extension, and nothing to install is simpler
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor"))
+from sgp4 import omm  # noqa: E402
 from sgp4.api import Satrec  # noqa: E402
 
 R_EARTH = 6378.137
@@ -126,7 +128,19 @@ def planet(name, t):
 
 # ---------- satellites ----------
 
-def read_tles(text):
+def read_orbits(text):
+    """[(name, satellite)] from CelesTrak's OMM CSV, or from TLEs (the samples are TLEs).
+    CSV because TLEs stop at catalog number 99999, and every launch since mid-2026 is past it."""
+    if text.startswith("OBJECT_NAME"):
+        out = []
+        for fields in omm.parse_csv(io.StringIO(text)):
+            sat = Satrec()
+            try:
+                omm.initialize(sat, fields)
+            except (KeyError, TypeError, ValueError):
+                continue  # one odd row costs one satellite, not the frame
+            out.append((fields["OBJECT_NAME"], sat))
+        return out
     rows = [r.rstrip() for r in text.splitlines() if r.strip()]
     return [(rows[i].strip(), Satrec.twoline2rv(rows[i + 1], rows[i + 2])) for i in range(0, len(rows) - 2, 3)]
 
