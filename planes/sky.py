@@ -1044,9 +1044,9 @@ def draw_panel(d, sky):
         draw_year(d, sky, x0, y + 20, width, bottom)
         return
 
-    # How far, as a plain list, farthest first: the order says it, no scale needed
+    # How far, farthest first: the order says it, so no scale and no leader lines
     items = ladder_items(sky)
-    top, gap = y + 30, 56
+    top, gap = y + 30, 64
     room = int((bottom - 10 - top) / gap)
     if room < 1:
         return
@@ -1054,11 +1054,16 @@ def draw_panel(d, sky):
         # The farthest thing and the Moon matter most
         order = ("star", "moon", "station", "balloon", "pico", "train", "planet", "sun")
         items = sorted(sorted(items, key=lambda i: order.index(i[2]))[:room], key=lambda i: i[1])
+    # A rail with a stop for each, like a transit line: each dot level with its own name
+    rail, lx = x0 + 12, x0 + 44
+    mid = RUNG.size * 0.62
+    d.line((rail, top + mid, rail, top + (len(items) - 1) * gap + mid), fill=FRAME, width=8)
     for i, (name, km, _kind) in enumerate(reversed(items)):
         ly = top + i * gap
-        d.text((x0, ly), name, font=RUNG, fill=THING)
+        d.ellipse((rail - 13, ly + mid - 13, rail + 13, ly + mid + 13), fill=THING)
+        d.text((lx, ly), name, font=RUNG, fill=THING)
         nw = P.text_w(d, name, RUNG)
-        d.text((x0 + nw + 14, ly + RUNG.size - KM.size - 1), P.fit(d, fmt_km(km), KM, x1 - x0 - nw - 14),
+        d.text((lx + nw + 14, ly + RUNG.size - KM.size - 1), P.fit(d, fmt_km(km), KM, x1 - lx - nw - 14),
                font=KM, fill=SOFT)
 
 
