@@ -57,8 +57,8 @@ It's safe to run again, and it does four things:
 4. **Code.** Runs `tools/deploy.sh`, which copies `planes/` and starts the loop.
 
 Then set `lat`, `lon`, `city`, `airports` and `tz` in `config.json`
-([README](../README.md#make-it-yours)), and measure `safe` with
-[the test pattern](../README.md#the-test-pattern).
+([configuration.md](configuration.md)), and measure `safe` with
+[the test pattern](frame.md#measure-what-the-mat-hides).
 
 ### About the Python bundle
 
@@ -85,6 +85,23 @@ FreeType; the code draws halos by offsetting text instead.
 | Test pattern | `tools/grid.sh`, then `tools/grid.sh done` |
 | Logs | `/tmp/planes.log` on the device; battery in `/mnt/us/planes/power.log` |
 | Another Kindle | Every tool takes `KINDLE=host`, e.g. `KINDLE=kindle2 tools/deploy.sh` |
+
+## What's on the Kindle
+
+| Where | What |
+|---|---|
+| `/mnt/us/planes/` | The code, fonts and shoreline, copied by `tools/deploy.sh` |
+| `/mnt/us/planes/config.json` | Your settings. A deploy never overwrites it |
+| `/mnt/us/planes/cache.json` | Routes and aircraft types already looked up |
+| `/mnt/us/planes/tracks.json`, `traffic.json` | Today's positions for the night view, and counts for the traffic chart |
+| `/mnt/us/planes/power.log` | Battery readings, summarized by `tools/battery.py` |
+| `/mnt/us/python/` | Python 3.12 with Pillow and requests |
+| `/etc/upstart/planes.conf` | Starts the display on boot |
+| `/tmp/planes.log` | Errors. Cleared on reboot |
+
+The Kindle sends nothing anywhere except requests for plane positions near `lat`, `lon`,
+and for the routes of the planes it shows. To remove everything, delete the two folders and
+`planes.conf`.
 
 ## Paperwhite 2
 

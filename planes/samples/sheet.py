@@ -45,5 +45,6 @@ cols = 2
 sheet = Image.new("L", (cols * tw + (cols + 1) * 16, ((len(tiles) + 1) // cols) * (th + 16) + 16), 120)
 for i, t in enumerate(tiles):
     sheet.paste(t, (16 + (i % cols) * (tw + 16), 16 + (i // cols) * (th + 16)))
+os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)  # out/ is gitignored, so a fresh clone has none
 sheet.save(out)
 print(out)

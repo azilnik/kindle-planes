@@ -1317,6 +1317,8 @@ def main():
     session.headers.update(UA)
     # PGM: uncompressed, 7 ms to write on the Kindle where PNG took 500+
     frame_path = args.out or "/tmp/planes.pgm"
+    if args.out:
+        os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
 
     if args.sample:
         with open(args.sample) as f:
