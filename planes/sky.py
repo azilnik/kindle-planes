@@ -816,8 +816,9 @@ def events(sky):
                         stats=[(hm(day["length"]), "OF DAYLIGHT"),
                                ("%d°" % (sun["el"] if sun else 0), "UP IN THE " + P.compass(sun["az"] if sun else 180))],
                         path=(clock(day["rise"]), clock(day["set"]), along(day["rise"], day["set"], t)), icon="sun",
-                        foot="Gaining %s a day" % ms(diff) if diff > 0 else
-                        ("Stars out by " + clock(day["dark"]) if day.get("dark") else None)))
+                        foot="Longest day of the year" if abs(diff) < 15 and day["length"] > 12 * 3600 else
+                        ("Gaining %s a day" % ms(diff) if diff > 0 else
+                         ("Stars out by " + clock(day["dark"]) if day.get("dark") else None))))
     rise = day["rise"] if day and t < day["rise"] else (sky.get("tomorrow") or {}).get("rise")
     if rise:
         evs.append(dict(kind="sun", wonder=1, start=rise, end=rise + 3600, head="Sunrise " + clock(rise), stats=[]))
@@ -981,29 +982,33 @@ def draw_path(d, x, y, w, rise, sets, frac, icon):
 
 def draw_year(d, sky, x0, y, width, bottom):
     """Hours of daylight through the year, today on it: where the year stands between the
-    solstices. The longest and shortest days are written at the peak and the trough."""
+    solstices. As a sparkline marks its extremes: the longest day's value above the peak,
+    the shortest's below the trough, so the line never runs through either, months under."""
     pts = sky["year"]
     lo, hi = min(h for _, h in pts), max(h for _, h in pts)
-    top = y + SMALL.size + 12
-    ch = min(150, bottom - top - SMALL.size - 30)
-    if ch < 80:
+    line_h = SMALL.size + 10
+    top = y + line_h
+    ch = min(150, bottom - top - 2 * line_h - 10)
+    if ch < 70:
         return
 
     def xy(doy, h):
         return x0 + (doy - 1) / 365.0 * width, top + ch - (h - lo) / (hi - lo) * ch
 
     d.line([xy(*p) for p in pts], fill=SOFT, width=5, joint="curve")
-    peak = max(pts, key=lambda p: p[1])
-    px_, py_ = xy(*peak)
-    lab = hm(hi * 3600)
-    d.text((px_ - P.text_w(d, lab, SMALL) / 2, py_ - SMALL.size - 10), lab, font=SMALL, fill=SOFT)
-    lab = hm(lo * 3600)
-    d.text((x0 + width - P.text_w(d, lab, SMALL), xy(366, lo)[1] - SMALL.size - 10), lab, font=SMALL, fill=SOFT)
+    today = time.localtime(sky["t"]).tm_yday
+    for (doy, h), above in ((max(pts, key=lambda p: p[1]), True), (min(pts, key=lambda p: p[1]), False)):
+        if abs(doy - today) < 12:
+            continue  # today is the extreme: its dot says so
+        px_, py_ = xy(doy, h)
+        lab = hm(h * 3600)
+        lw = P.text_w(d, lab, SMALL)
+        lx = min(max(px_ - lw / 2, x0), x0 + width - lw)
+        d.text((lx, py_ - line_h - 2 if above else py_ + 10), lab, font=SMALL, fill=SOFT)
     for i, m in enumerate("JFMAMJJASOND"):
         mx = x0 + (i + 0.5) / 12.0 * width
-        d.text((mx - P.text_w(d, m, SMALL) / 2, top + ch + 12), m, font=SMALL, fill=FRAME)
-    doy = time.localtime(sky["t"]).tm_yday
-    tx, ty = xy(doy, sky["day"]["length"] / 3600.0)
+        d.text((mx - P.text_w(d, m, SMALL) / 2, top + ch + line_h + 6), m, font=SMALL, fill=FRAME)
+    tx, ty = xy(today, sky["day"]["length"] / 3600.0)
     d.ellipse((tx - 13, ty - 13, tx + 13, ty + 13), fill=HERO)
 
 
