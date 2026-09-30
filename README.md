@@ -2,7 +2,7 @@
 
 A Kindle in a picture frame that shows the planes flying overhead.
 
-<img alt="A light wood picture frame on a kitchen counter. Inside, an e-ink screen shows Toronto to Montréal, 900 feet, 233 km/h, 48 minutes to go, and a small map with the plane over the lakeshore" src="docs/images/hero.jpg" width="820">
+<img alt="A light wood picture frame on a kitchen counter. The e-ink screen inside cycles through the planes overhead: Dublin to Toronto, Toronto to Dallas-Fort Worth, Calgary to Toronto, London to Toronto, then Hong Kong to Toronto descending over the lake, each with its height, speed and a small map" src="docs/images/hero.gif" width="820">
 
 A jailbroken Kindle Paperwhite fetches live flight positions, picks the plane closest to
 home, and shows where it's flying from and to, how high and fast it's going, and how far
