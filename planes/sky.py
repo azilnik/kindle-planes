@@ -1080,6 +1080,7 @@ BALLOON_WINDOWS = ((10.75, 14.0), (22.75, 26.0))
 # Outside the windows, one look every 3 hours: research flights go up off the schedule, and
 # pico balloons drift through at any hour. Every 30 minutes while a pico is in our sky
 SONDE_CHECK_S = 3 * 3600
+WINDOW_CHECK_S = 900
 PICO_CHECK_S = 1800
 AMATEUR = "https://api.v2.sondehub.org/amateur?lat=%.4f&lon=%.4f&distance=250000&last=7200"
 
@@ -1242,8 +1243,11 @@ class Frame:
         return {"time": now, "orbits": self.orbits, "balloon": self.balloon, "amateur": self.amateur}
 
     def balloons_due(self, now):
-        if self.balloon or in_balloon_window(now):
+        # In a launch window, every 15 minutes until one is up; then every 5 to draw its climb
+        if self.balloon:
             return self.sondes_at + P.FETCH_BUSY_S
+        if in_balloon_window(now):
+            return self.sondes_at + WINDOW_CHECK_S
         return min(next_balloon_window(now), self.sondes_at + (PICO_CHECK_S if self.amateur else SONDE_CHECK_S))
 
     def fetch_every(self, now):

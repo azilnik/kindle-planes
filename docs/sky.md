@@ -55,9 +55,9 @@ display.
 
 - Satellite orbits: [CelesTrak](https://celestrak.org), at most once every 20 hours. The
   Kindle keeps them in `orbits.csv`, so a day without network still shows them.
-- Balloons: [SondeHub](https://sondehub.org), every 5 minutes in the hours after the
-  weather balloon launches at 00:00 and 12:00 UTC, and every 3 hours otherwise, for
-  off-schedule flights and pico balloons.
+- Balloons: [SondeHub](https://sondehub.org). In the hours after the weather balloon
+  launches at 00:00 and 12:00 UTC, every 15 minutes until one is up, then every 5 to draw
+  its climb. Otherwise every 3 hours, for off-schedule flights and pico balloons.
 - The Sun, Moon, planets, stars and meteor showers are worked out on the Kindle, with no
   network. So Wi-Fi goes on only when orbits or balloons are due, and in between the sky
   just redraws every 10 minutes, or every minute while something crosses.
