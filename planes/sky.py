@@ -73,9 +73,11 @@ HERO, THING, SOFT, FRAME, GROUND = 255, 238, 204, 153, 0
 # ---------- where things are ----------
 
 def dome_xy(el, az):
-    """Azimuthal equidistant, looking up: zenith at center, north up, east left."""
+    """Azimuthal equidistant, looking up, like a star chart held over your head: zenith at
+    the center and the direction you face (config "heading") at the bottom, so the dome's
+    left and right are yours. Facing north, north is at the bottom and west on the left."""
     r = DOME_R * (90 - el) / 90
-    a = math.radians(az - P.HEADING)
+    a = math.radians(az - P.HEADING - 180)
     return DOME_X - r * math.sin(a), DOME_Y - r * math.cos(a)
 
 

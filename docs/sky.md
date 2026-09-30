@@ -1,8 +1,10 @@
 # The sky frame
 
-The sky frame shows what's above your home beyond the planes, as if you were lying on the
-lawn looking up. The middle of the circle is straight overhead, north is up and east is on
-the left. It's white on black, day and night.
+The sky frame shows what's above your home beyond the planes, drawn like a star chart held
+over your head. The middle of the circle is straight overhead, and the direction you face
+when you look at the frame (`heading` in `config.json`) is at the bottom, so the chart's
+left and right are yours: something low on the left is low ahead and to your left. It's
+white on black, day and night.
 
 <img alt="The sky frame at night: a black circle of stars with the ISS crossing it on a heavy dashed path, the Moon and Saturn low in the east, a balloon in the south, and a panel reading ISS overhead, 8:01 tonight, 83 degrees up, up now" src="images/screen-sky.png" width="640">
 
