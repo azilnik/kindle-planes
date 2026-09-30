@@ -73,12 +73,13 @@ HERO, THING, SOFT, FRAME, GROUND = 255, 238, 204, 153, 0
 # ---------- where things are ----------
 
 def dome_xy(el, az):
-    """Azimuthal equidistant, looking up, like a star chart held over your head: zenith at
-    the center and the direction you face (config "heading") at the bottom, so the dome's
-    left and right are yours. Facing north, north is at the bottom and west on the left."""
+    """The sky as a map seen from above, like the planes map: straight overhead at the
+    center, the horizon at the rim, and the direction you face (config "heading") at the
+    top, with your left on the left. Not mirrored as a chart held overhead would be: a map
+    is what people already read, and forward is up in both frames."""
     r = DOME_R * (90 - el) / 90
-    a = math.radians(az - P.HEADING - 180)
-    return DOME_X - r * math.sin(a), DOME_Y - r * math.cos(a)
+    a = math.radians(az - P.HEADING)
+    return DOME_X + r * math.sin(a), DOME_Y - r * math.cos(a)
 
 
 def seen_from_home(lat, lon, alt_km):
@@ -444,6 +445,16 @@ def dash_line(d, pts, fill, width, on, off):
                 carry = on if drawing else off
 
 
+def compass_boxes(d):
+    """Where N, E, S and W go, just outside the horizon, as boxes for labels to keep clear of."""
+    boxes = []
+    for lab, az in (("N", 0), ("E", 90), ("S", 180), ("W", 270)):
+        x, y = dome_xy(-7, az)
+        w = P.text_w(d, lab, COMPASS)
+        boxes.append((x - w / 2 - 4, y - COMPASS.size * 0.6 - 2, x + w / 2 + 4, y + COMPASS.size * 0.7))
+    return boxes
+
+
 def draw_dome(img, d, sky):
     dome, ink = GROUND, THING
     hk = sky["hero"]["kind"] if sky["hero"].get("start", 0) <= sky["t"] else None
@@ -456,10 +467,10 @@ def draw_dome(img, d, sky):
     # Solid page, sky and ground alike: only the horizon line says where the sky ends
     d.ellipse((DOME_X - R, DOME_Y - R, DOME_X + R, DOME_Y + R), outline=FRAME, width=7)
 
-    # The way you face, as a soft cone from the middle toward the bottom of the dome, the
-    # way a map shows it. Drawn first, so everything in the sky sits on top of it
+    # The way you face, as a soft cone from the middle toward the top, the way a map shows
+    # it. Drawn first, so everything in the sky sits on top of it
     cone = DOME_R * 0.34
-    d.pieslice((DOME_X - cone, DOME_Y - cone, DOME_X + cone, DOME_Y + cone), 62, 118, fill=FRAME - 51)
+    d.pieslice((DOME_X - cone, DOME_Y - cone, DOME_X + cone, DOME_Y + cone), 242, 298, fill=FRAME - 51)
 
     things = sky["things"]
     del TAKEN[:]
@@ -504,9 +515,22 @@ def draw_dome(img, d, sky):
             rr = 18 if th["kind"] == "sun" else 8
             d.ellipse((x - rr, y - rr, x + rr, y + rr), outline=ghost, width=5)
         lab = th["name"] + (" rises " + clock(th["rises"]) if th.get("rises") else "")
-        w = P.text_w(d, lab, SMALL)
-        lx = min(max(x - w / 2, SKY_BOX[0]), SKY_BOX[2] - w)
-        glow_text(d, (lx, y + 34), lab, SMALL, SOFT, GROUND)
+        w, h = P.text_w(d, lab, SMALL), SMALL.size
+        # Below, above, right or left of it: the first spot clear of the compass letters,
+        # and outside the dome, where the ground is
+        spots = [(x - w / 2, y + 30), (x - w / 2, y - 30 - h * 1.2), (x + 36, y - h * 0.6), (x - 36 - w, y - h * 0.6)]
+        spots = [(min(max(lx, SKY_BOX[0]), SKY_BOX[2] - w), min(max(ly, SKY_BOX[1]), SKY_BOX[3] - h * 1.2))
+                 for lx, ly in spots]
+
+        def cost(sp, w=w, h=h):
+            b = (sp[0] - 4, sp[1] - 2, sp[0] + w + 4, sp[1] + h * 1.2)
+            hit = sum(max(0, min(b[2], c[2]) - max(b[0], c[0])) * max(0, min(b[3], c[3]) - max(b[1], c[1]))
+                      for c in compass_boxes(d) + TAKEN)
+            return hit, inside((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+
+        lx, ly = min(spots, key=cost)
+        TAKEN.append((lx - 4, ly - 2, lx + w + 4, ly + h * 1.2))
+        glow_text(d, (lx, ly), lab, SMALL, SOFT, GROUND)
 
     for th in [th for th in things if not th.get("below")]:
         x, y = dome_xy(th["el"], th["az"])
@@ -579,11 +603,9 @@ def draw_dome(img, d, sky):
     if limit:
         star_names(d, sky["t"])
 
-    # Compass letters around the dome
-    for lab, az in (("N", 0), ("E", 90), ("S", 180), ("W", 270)):
-        x, y = dome_xy(-7, az)
-        w = P.text_w(d, lab, COMPASS)
-        d.text((x - w / 2, y - COMPASS.size * 0.6), lab, font=COMPASS, fill=SOFT)
+    # Compass letters around the dome, knocked out so nothing runs through them
+    for lab, (x0, y0, _, _) in zip("NESW", compass_boxes(d)):
+        glow_text(d, (x0 + 4, y0 + 2), lab, COMPASS, SOFT, GROUND)
 
 
 # ---------- panel ----------
