@@ -58,7 +58,7 @@ KM = face("light", 34)
 NOTE = face("light", 34)
 COMPASS = face("name", 46)
 NUM = face("num", 104)
-SKY_PANEL_W = 560
+SKY_PANEL_W = 500
 # Things down to this far below the horizon show outside the dome as ghosts
 BELOW = 30
 # Always a dark page, day and night, and light is importance: each step up the panel's 16
@@ -458,7 +458,7 @@ def compass_boxes(d):
     """Where N, E, S and W go, just outside the horizon, as boxes for labels to keep clear of."""
     boxes = []
     for lab, az in (("N", 0), ("E", 90), ("S", 180), ("W", 270)):
-        x, y = dome_xy(-7, az)
+        x, y = dome_xy(0, az)
         w = P.text_w(d, lab, COMPASS)
         boxes.append((x - w / 2 - 4, y - COMPASS.size * 0.6 - 2, x + w / 2 + 4, y + COMPASS.size * 0.7))
     return boxes
@@ -483,6 +483,13 @@ def draw_dome(img, d, sky):
 
     things = sky["things"]
     del TAKEN[:]
+    # Compass letters on the horizon, in a gap cut in the line, like a compass bezel. First,
+    # so the sky draws over them (the Moon rising in the east beats the E), and taken, so
+    # no label lands on one
+    for lab, box in zip("NESW", compass_boxes(d)):
+        d.rectangle((box[0] - 4, box[1], box[2] + 4, box[3]), fill=GROUND)
+        d.text((box[0] + 4, box[1] + 2), lab, font=COMPASS, fill=SOFT)
+        TAKEN.append(box)
     for th in [th for th in things if not th.get("below")]:
         # Marks claim their space before any label goes down
         x, y = dome_xy(th["el"], th["az"])
@@ -494,6 +501,13 @@ def draw_dome(img, d, sky):
     limit = mag_limit(sky["sun_el"])
     if limit:
         draw_stars(img, sky["t"], limit)
+        # The few brightest are sparkles, big enough that a label on one hides it
+        for ra, dec, mag in SKY["stars"]:
+            if mag < 0.6:
+                el, az = astro.alt_az(ra, dec, sky["t"], P.HOME_LAT, P.HOME_LON)
+                if el > 0:
+                    x, y = dome_xy(el, az)
+                    TAKEN.append((x - 14, y - 14, x + 14, y + 14))
     sun_ra, sun_dec, _ = astro.sun(sky["t"])
     sel, saz = astro.alt_az(sun_ra, sun_dec, sky["t"], P.HOME_LAT, P.HOME_LON)
     sun_xy = dome_xy(sel, saz)  # off the dome when it's down, which still points the right way
@@ -619,9 +633,6 @@ def draw_dome(img, d, sky):
     if limit:
         star_names(d, sky["t"])
 
-    # Compass letters around the dome, knocked out so nothing runs through them
-    for lab, (x0, y0, _, _) in zip("NESW", compass_boxes(d)):
-        glow_text(d, (x0 + 4, y0 + 2), lab, COMPASS, SOFT, GROUND)
 
 
 # ---------- panel ----------
@@ -641,11 +652,12 @@ def clock(t):
 
 
 def hm(seconds):
-    return "%d:%02d" % divmod(int(round(seconds / 60.0)), 60)
+    """A duration as the planes frame writes them: 11h 46m, never 11:46, which reads as a time."""
+    return "%dh %02dm" % divmod(int(round(seconds / 60.0)), 60)
 
 
 def ms(seconds):
-    return "%d:%02d" % divmod(int(round(seconds)), 60) if seconds >= 60 else "%d s" % round(seconds)
+    return "%dm %02ds" % divmod(int(round(seconds)), 60) if seconds >= 60 else "%ds" % round(seconds)
 
 
 def moon_phase(frac, waxing):
@@ -1101,12 +1113,13 @@ def layout():
     pw = max(P.PANEL_W_CFG or 0, SKY_PANEL_W)
     if P.STYLES[P.STYLE].get("map_side") == "right":
         PANEL_X, PANEL_R = P.PANEL_X, P.PANEL_X + pw - 8
-        SKY_BOX = (PANEL_R + 40, t[1], t[2], t[3])
+        SKY_BOX = (PANEL_R + 24, t[1], t[2], t[3])
     else:
         PANEL_X, PANEL_R = P.PANEL_R - pw + 8, P.PANEL_R
-        SKY_BOX = (t[0], t[1], PANEL_X - 40, t[3])
-    # Room outside the horizon for the compass letters, which sit on the ground
-    DOME_R = int(min(SKY_BOX[2] - SKY_BOX[0], SKY_BOX[3] - SKY_BOX[1]) / 2 - 52)
+        SKY_BOX = (t[0], t[1], PANEL_X - 24, t[3])
+    # The compass letters sit on the horizon itself, in gaps cut in the line, so the dome
+    # only needs room for half a letter outside it
+    DOME_R = int(min(SKY_BOX[2] - SKY_BOX[0], SKY_BOX[3] - SKY_BOX[1]) / 2 - 26)
     DOME_X = (SKY_BOX[0] + SKY_BOX[2]) // 2
     DOME_Y = (SKY_BOX[1] + SKY_BOX[3]) // 2
 
