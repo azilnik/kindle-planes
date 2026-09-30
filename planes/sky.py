@@ -456,6 +456,11 @@ def draw_dome(img, d, sky):
     # Solid page, sky and ground alike: only the horizon line says where the sky ends
     d.ellipse((DOME_X - R, DOME_Y - R, DOME_X + R, DOME_Y + R), outline=FRAME, width=7)
 
+    # The way you face, as a soft cone from the middle toward the bottom of the dome, the
+    # way a map shows it. Drawn first, so everything in the sky sits on top of it
+    cone = DOME_R * 0.34
+    d.pieslice((DOME_X - cone, DOME_Y - cone, DOME_X + cone, DOME_Y + cone), 62, 118, fill=FRAME - 51)
+
     things = sky["things"]
     del TAKEN[:]
     for th in [th for th in things if not th.get("below")]:
@@ -484,10 +489,9 @@ def draw_dome(img, d, sky):
                 bx, by = dome_xy(el, az)
                 d.ellipse((bx - 7, by - 7, bx + 7, by + 7), fill=SOFT)
 
-    # Home: straight up, a plain crosshair
-    r = 18
-    d.line((DOME_X - r, DOME_Y, DOME_X + r, DOME_Y), fill=SOFT, width=6)
-    d.line((DOME_X, DOME_Y - r, DOME_X, DOME_Y + r), fill=SOFT, width=6)
+    # You, under the middle of the sky, as a map marks you: a dot, on top of the cone
+    d.ellipse((DOME_X - 19, DOME_Y - 19, DOME_X + 19, DOME_Y + 19), fill=GROUND)
+    d.ellipse((DOME_X - 13, DOME_Y - 13, DOME_X + 13, DOME_Y + 13), fill=THING)
 
     # Things below the horizon, ghosted on the ground outside it
     for th in [th for th in things if th.get("below") and th["kind"] == "moon"]:
