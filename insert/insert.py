@@ -1,21 +1,21 @@
 """Frame insert for the Kindle Paperwhite 10th gen (PW4) in an IKEA RÖDALM frame.
 
 One printed piece, printed face-down (the front is the visible mat):
-  - a mat window centred in the frame, with a 45° mat bevel;
+  - a mat window centered in the frame, with a 45° mat bevel;
   - behind it a friction-fit pocket for the Kindle (landscape, port/logo edge on the left);
   - room beside the charging port for the plug, the cable leaving out the back;
   - a finger notch to lift the Kindle out.
 
-The Kindle's screen sits off-centre in its body (the logo bezel is deeper), and the plug
-needs room on that side too, so the screen ends up off-centre in the frame. The window is
-therefore the largest rectangle that is centred in the frame AND inside the screen; the
+The Kindle's screen sits off-center in its body (the logo bezel is deeper), and the plug
+needs room on that side too, so the screen ends up off-center in the frame. The window is
+therefore the largest rectangle that is centered in the frame AND inside the screen; the
 strip of screen it hides is reported as the `safe` area for planes/config.json, so the
 display lays itself out in exactly the visible part.
 
 Values marked MEASURE are estimates: confirm with a ruler/calipers before printing.
 Print face-down in PETG (PLA springs creep), no brim or skirt. Fits an A1 mini bed.
 Run:  uv run --python 3.12 --with manifold3d --with numpy --with trimesh --with pillow \\
-          --with networkx --with lxml python insert.py [rodalm13x18|rodalm21x30]
+          --with networkx --with lxml python insert.py [rodalm13x18|rodalm21x30] [pw4|pw2]
 """
 
 import os
@@ -34,7 +34,7 @@ FRAMES = {
     "rodalm13x18": dict(rebate_l=180.0, rebate_w=131.0, ikea_mat=False, plug_room=5.5,
                         ikea_opening_l=0, ikea_opening_w=0),
     # IKEA RÖDALM 21x30 cm, landscape: printed inner mat behind IKEA's paper mat (double mat),
-    # a rim drops into the IKEA opening to centre it; any right-angle plug fits beside it.
+    # a rim drops into the IKEA opening to center it; any right-angle plug fits beside it.
     "rodalm21x30": dict(rebate_l=300.0, rebate_w=210.0, ikea_mat=True, plug_room=0.0,
                         ikea_opening_l=170.0, ikea_opening_w=120.0),   # MEASURE the opening
 }
@@ -47,7 +47,7 @@ P = dict(
     screen_w=90.7,           # 1072 px
     bezel_port=26.0,         # MEASURE: port/logo edge of the body to the screen
     bezel_top=18.6,          # MEASURE: opposite edge to the screen
-    port_from_edge=58.0,     # MEASURE: along the port edge, top (as mounted) to USB centre
+    port_from_edge=58.0,     # MEASURE: along the port edge, top (as mounted) to USB center
     fit=0.25,                # pocket clearance per side
     rebate_fit=0.5,          # insert clearance to the frame per side
     window_overlap=1.5,      # mat covers this much of the screen edge; absorbs bezel estimate error
@@ -70,19 +70,28 @@ P = dict(
 )
 
 
+# The same insert adjusted for another Kindle, from a test fit: a PW2 in the PW4's 13x18
+# insert needed 0.5 mm more along the port edge, and its cable wants a 40 mm slot centered on
+# that edge. Its screen sits differently, so measure `safe` with the test pattern.
+KINDLES = {
+    "pw4": {},
+    "pw2": dict(kindle_w=116.5, plug_notch_w=40.0, port_from_edge=58.5),
+}
+
+
 def box(lx, ly, lz, cx=0.0, cy=0.0, z0=0.0):
     return Manifold.cube((lx, ly, lz), center=True).translate((cx, cy, z0 + lz / 2))
 
 
 def layout(p, f):
-    """Where things sit, in mm, origin at the frame centre, +x away from the port."""
+    """Where things sit, in mm, origin at the frame center, +x away from the port."""
     if f["ikea_mat"]:
         insert_l, insert_w = 178.0, 128.0     # A1 mini bed
     else:
         insert_l = f["rebate_l"] - 2 * p["rebate_fit"]
         insert_w = f["rebate_w"] - 2 * p["rebate_fit"]
     pl, pw = p["kindle_l"] + 2 * p["fit"], p["kindle_w"] + 2 * p["fit"]
-    # Ideal: screen centred. Screen centre is (bezel_port - bezel_top)/2 from body centre,
+    # Ideal: screen centered. Screen center is (bezel_port - bezel_top)/2 from body center,
     # toward the far side, so the body sits that far toward the port...
     body_cx = -(p["bezel_port"] - p["bezel_top"]) / 2.0
     # ...unless the port side then lacks room for the plug: push the body away from it.
@@ -92,7 +101,7 @@ def layout(p, f):
         body_cx += need - port_wall
     screen_cx = body_cx + (p["bezel_port"] - p["bezel_top"]) / 2.0
     s0, s1 = screen_cx - p["screen_l"] / 2, screen_cx + p["screen_l"] / 2
-    # Largest window centred on the frame and inside the screen (minus the overlap)
+    # Largest window centered on the frame and inside the screen (minus the overlap)
     half = min(-s0, s1) - p["window_overlap"]
     wl = 2 * half
     ww = p["screen_w"] - 2 * p["window_overlap"]
@@ -209,8 +218,12 @@ def preview(p, f, L, path, scale=5):
 
 
 if __name__ == "__main__":
-    name = sys.argv[1] if len(sys.argv) > 1 else "rodalm13x18"
-    f = FRAMES[name]
+    frame = sys.argv[1] if len(sys.argv) > 1 else "rodalm13x18"
+    kindle = sys.argv[2] if len(sys.argv) > 2 else "pw4"
+    f = FRAMES[frame]
+    P = dict(P, **KINDLES[kindle])
+    # The PW4 files keep their original names
+    name = frame if kindle == "pw4" else frame + "-" + kindle
     L = layout(P, f)
     solid, thick = build(P, f, L)
     mesh = export(solid, os.path.join(HERE, "insert-" + name))
@@ -219,4 +232,7 @@ if __name__ == "__main__":
         name, L["insert_l"], L["insert_w"], thick, mesh.volume / 1000, mesh.is_watertight))
     print("window %.1f x %.1f mm (screen %.1f x %.1f); walls: port %.1f, far %.1f, sides %.1f mm" % (
         L["wl"], L["ww"], P["screen_l"], P["screen_w"], L["port_wall"], L["far_wall"], L["side_wall"]))
-    print('config.json  "safe": %s' % L["safe"])
+    if kindle == "pw4":
+        print('config.json  "safe": %s' % L["safe"])
+    else:
+        print("safe: measure it with tools/grid.sh; this Kindle's screen sits differently")

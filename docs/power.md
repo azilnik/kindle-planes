@@ -1,7 +1,7 @@
 # Power
 
-Measured on a PW4 on battery. `tools/battery.py power.log` prints these numbers from the
-device's log.
+Measured on a PW4 on battery, unless the row says otherwise. `tools/battery.py power.log`
+prints these numbers from the device's log.
 
 | Setup | Draw | Per charge |
 |---|---|---|
@@ -9,6 +9,10 @@ device's log.
 | Suspend between redraws, Wi-Fi only for fetches | 20.5 mA | ~3 days |
 | Plus waiting for the e-ink refresh and Wi-Fi teardown before suspend | 13.5 mA | ~5 days |
 | In the frame, day-to-day | ~11 mA | ~5.5 days |
+| PW2 in the frame, deep sleep between redraws (under an hour measured, 2026-09-30) | ~10 mA | ~5.5 days of its ~1400 mAh |
+
+A PW2 spends about a second awake per frame, against a third of a second on a PW4: most of
+it is scaling the canvas down to its smaller panel (`turn()`).
 
 ## What the loop does
 
@@ -24,7 +28,7 @@ device's log.
 
 ## What each fix was worth
 
-A frame went from ~1.5 s to ~0.35 s of awake time: cache rasterised text and rotated
+A frame went from ~1.5 s to ~0.35 s of awake time: cache rasterized text and rotated
 icons, write PGM instead of PNG (7 ms instead of 500), transpose instead of rotate.
 
 Suspending while the screen was still refreshing hung the kernel about every 7th sleep and

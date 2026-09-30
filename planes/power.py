@@ -7,6 +7,7 @@ been verified on the device:
     {"wifi_toggle": true, "governor": "powersave", "suspend": false}
 """
 
+import glob
 import os
 import select
 import struct
@@ -14,15 +15,38 @@ import subprocess
 import time
 
 KINDLE = os.path.exists("/usr/bin/lipc-set-prop")
-# On a PW4 the SoC's SNVS RTC is the one that wakes it from suspend-to-RAM; rtc0 (the
-# BD71827 PMIC) does not. Confirmed by travismorton1995/kindle-dash and katadelos/ktrmnl.
-WAKEALARM = "/sys/class/rtc/rtc1/wakealarm"
+
+
+def _find(pattern, fallback):
+    found = sorted(glob.glob(pattern))
+    return found[0] if found else fallback
+
+
+def _snvs_rtc():
+    # The SoC's SNVS RTC is the one that wakes a PW4 from suspend-to-RAM; its PMIC's RTC does
+    # not. Confirmed by travismorton1995/kindle-dash and katadelos/ktrmnl. It's rtc1 on a PW4
+    # and rtc2 on a PW2, so find it by name.
+    for rtc in sorted(glob.glob("/sys/class/rtc/rtc*")):
+        try:
+            with open(rtc + "/name") as f:
+                if "snvs" in f.read():
+                    return rtc + "/wakealarm"
+        except OSError:
+            pass
+    return "/sys/class/rtc/rtc1/wakealarm"
+
+
+WAKEALARM = _snvs_rtc()
 # While this file exists the loop never suspends and keeps Wi-Fi up, so SSH stays reachable.
 HOLD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "HOLD")
-BAT = "/sys/class/power_supply/bd71827_bat"
+# PW4: a ROHM BD71827 power chip. PW2: a Maxim MAX77696. Same files, different names
+BAT = _find("/sys/class/power_supply/*_bat", _find("/sys/class/power_supply/*-battery", ""))
+AC_ONLINE = _find("/sys/class/power_supply/*_ac", _find("/sys/class/power_supply/*-charger", "")) + "/online"
+BACKLIGHT = _find("/sys/class/backlight/*", "/sys/class/backlight/bl") + "/brightness"
 LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "power.log")
 LOG_MAX = 256 * 1024
-# Both report KEY_POWER on a PW4 (SoC SNVS and the BD71827 PMIC); watch both
+# Both report KEY_POWER on a PW4 (SoC SNVS and the BD71827 PMIC); watch both. On a PW2
+# event0 is the power key and event1 the touchscreen, which never sends KEY_POWER
 POWER_KEYS = ("/dev/input/event0", "/dev/input/event1")
 KEY_POWER = 116
 
@@ -86,7 +110,7 @@ _frontlight = None
 def set_frontlight(level):
     """0-24 on powerd's scale. Only calls out when the level changes."""
     global _frontlight
-    lit = _read("/sys/class/backlight/bl/brightness") not in ("", "0")
+    lit = _read(BACKLIGHT) not in ("", "0")
     # Re-apply if the hardware disagrees (suspend can switch the LEDs off behind powerd)
     if KINDLE and (level != _frontlight or bool(level) != lit):
         _lipc_set("com.lab126.powerd", "flIntensity", int(level))
@@ -94,7 +118,7 @@ def set_frontlight(level):
 
 
 def on_ac():
-    return KINDLE and _read("/sys/class/power_supply/bd71827_ac/online") == "1"
+    return KINDLE and _read(AC_ONLINE) == "1"
 
 
 def restart_wifid():
@@ -131,7 +155,7 @@ def battery():
     if not KINDLE:
         return None
     return (_read(BAT + "/capacity"), _read(BAT + "/charge_now"),
-            _read(BAT + "/current_avg"), _read("/sys/class/power_supply/bd71827_ac/online"))
+            _read(BAT + "/current_avg"), _read(AC_ONLINE))
 
 
 def log(event, **fields):
@@ -142,13 +166,18 @@ def log(event, **fields):
     line = "%d %s cap=%s charge=%s avg=%s ac=%s %s\n" % (
         time.time(), event, bat[0], bat[1], bat[2], bat[3],
         " ".join("%s=%s" % kv for kv in sorted(fields.items())))
+    # OSError: the log is diagnostics, and the user store can vanish under it (Drive Mode).
+    # Two tries: on a fresh install there is no log to measure yet, and it must still start
     try:
         if os.path.getsize(LOG) > LOG_MAX:
             os.replace(LOG, LOG + ".1")
     except OSError:
         pass
-    with open(LOG, "a") as f:
-        f.write(line)
+    try:
+        with open(LOG, "a") as f:
+            f.write(line)
+    except OSError:
+        pass
 
 
 def sleep_until(when, suspend=False):

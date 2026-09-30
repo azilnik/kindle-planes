@@ -42,6 +42,7 @@ done
 sleep 3
 
 cd "$DIR"
+# Toronto unless config.json sets "tz"
 TZ="EST5EDT,M3.2.0,M11.1.0" SSL_CERT_FILE="$DIR/cacert.pem" REQUESTS_CA_BUNDLE="$DIR/cacert.pem" \
     nohup "$PY" planes.py "$@" >/tmp/planes.log 2>&1 &
 echo $! >"$PIDFILE"

@@ -18,12 +18,12 @@ if ! ssh -o ConnectTimeout=3 "$KINDLE" true 2>/dev/null; then
 fi
 # config.json and the files written at runtime stay on the device
 COPYFILE_DISABLE=1 tar cf - --exclude cache.json --exclude traffic.json --exclude 'tracks.json*' --exclude 'power.log*' \
-    --exclude __pycache__ --exclude samples --exclude config.json --exclude HOLD . |
+    --exclude __pycache__ --exclude samples --exclude 'config*.json' --exclude HOLD . |
     ssh "$KINDLE" 'cd /mnt/us/planes && tar xf -'
 if [ "$KEEP_HOLD" = "--hold" ]; then
     ssh "$KINDLE" 'touch /mnt/us/planes/HOLD'
 else
     ssh "$KINDLE" 'rm -f /mnt/us/planes/HOLD'
 fi
-ssh "$KINDLE" 'kill $(cat /tmp/planes.pid) 2>/dev/null; rm -f /tmp/planes.pid; sh /mnt/us/planes/run.sh'
+ssh "$KINDLE" '[ -f /tmp/planes.pid ] && kill $(cat /tmp/planes.pid) 2>/dev/null; rm -f /tmp/planes.pid; sh /mnt/us/planes/run.sh'
 echo "deployed$([ "$KEEP_HOLD" = "--hold" ] && echo ' (held awake: rm /mnt/us/planes/HOLD to resume power saving)')"

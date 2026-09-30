@@ -9,7 +9,5 @@ planes/measure_start
 __pycache__/
 .DS_Store
 out/
-insert/*.stl
-insert/*.3mf
 insert/preview-*.png
 insert/render-*.png

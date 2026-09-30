@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Planes overhead, drawn on a jailbroken Kindle Paperwhite 10th gen (1072x1448, 16 grays).
+Also runs on a Paperwhite 2 (758x1024): the same canvas, scaled down at output.
 
 Fetches live ADS-B positions, looks up routes and aircraft types, draws a map and a
 story panel with Pillow, and pushes the frame to the e-ink screen with FBInk.
@@ -57,22 +58,36 @@ STYLES = {
 # Landscape canvas; rotated into the panel's native 1072x1448 portrait at output
 W, H = 1448, 1072
 PANEL_W = 420
+# config.json "panel_w": an unframed PW2 shows more of the canvas, and a wider story panel
+# there keeps long city names on one line at full size
+PANEL_W_CFG = None
+# config.json "inset": text keeps this far inside `safe`, which is the visible area measured
+# right at the mat. 12 canvas px is 1 mm on either model (1448 px across 122.4 mm of screen).
+# The map, lake and planes still run out to `safe` itself
+INSET = 12
 
 
 def apply_layout(safe):
     """Fit everything inside the part of the screen a frame's mat leaves visible.
-    safe = (x0, y0, x1, y1) in landscape canvas pixels; measure it with a grid."""
-    global SAFE, PANEL_X, PANEL_R, MAP_BOX, RADAR, RADAR_X, RADAR_Y
+    safe = (x0, y0, x1, y1) in landscape canvas pixels; measure it with a grid.
+    TEXT is the same box INSET further in, for everything that's lettering."""
+    global SAFE, TEXT, PANEL_X, PANEL_R, MAP_BOX, LABEL_BOX, RADAR, RADAR_X, RADAR_Y
     SAFE = tuple(safe)
     x0, y0, x1, y1 = SAFE
-    pw = STYLES[STYLE].get("panel_w", PANEL_W)
-    # The map fills everything beside the panel, past its outer ring
+    i = INSET
+    TEXT = (x0 + i, y0 + i, x1 - i, y1 - i)
+    pw = PANEL_W_CFG or STYLES[STYLE].get("panel_w", PANEL_W)
+    # The map fills everything beside the panel, past its outer ring. The inset moves the
+    # panel's text in from the mat but not its width, so wrapping and the map are unchanged:
+    # it eats into the gap between them instead
     if STYLES[STYLE].get("map_side") == "right":
-        PANEL_X, PANEL_R = x0 + 8, x0 + pw
-        MAP_BOX = (PANEL_R + 24, y0, x1, y1)
+        PANEL_X, PANEL_R = x0 + 8 + i, x0 + pw + i
+        MAP_BOX = (x0 + pw + 24, y0, x1, y1)
+        LABEL_BOX = (MAP_BOX[0], TEXT[1], TEXT[2], TEXT[3])
     else:
-        PANEL_X, PANEL_R = x1 - pw, x1 - 8
-        MAP_BOX = (x0, y0, PANEL_X - 24, y1)
+        PANEL_X, PANEL_R = x1 - pw - i, x1 - 8 - i
+        MAP_BOX = (x0, y0, x1 - pw - 24, y1)
+        LABEL_BOX = (TEXT[0], TEXT[1], MAP_BOX[2], TEXT[3])
     RADAR = min(MAP_BOX[2] - MAP_BOX[0], y1 - y0) - 12
     RADAR_X = (MAP_BOX[0] + MAP_BOX[2] - RADAR) // 2
     RADAR_Y = (y0 + y1 - RADAR) // 2
@@ -165,6 +180,20 @@ F = {
 
 # ---------- data ----------
 
+def write_json(path, data, **kw):
+    """Atomic write; False instead of a crash when the user store is gone. Plugging the
+    Kindle into a computer hands /mnt/us to it (Drive Mode), and a write then fails with a
+    stale file handle. A skipped save is caught up on by the next one."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(data, f, **kw)
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        return False
+
+
 class Cache:
     def __init__(self, path):
         self.path = path
@@ -195,11 +224,8 @@ class Cache:
             if len(self.d[kind]) > 3000:
                 items = sorted(self.d[kind].items(), key=lambda kv: kv[1]["t"])
                 self.d[kind] = dict(items[-2000:])
-        tmp = self.path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(self.d, f)
-        os.replace(tmp, self.path)
-        self.dirty = False
+        if write_json(self.path, self.d):
+            self.dirty = False
 
 
 def fetch_aircraft(session):
@@ -352,7 +378,7 @@ def lookup_airframe(session, cache, hexid):
 # ---------- geometry ----------
 
 def distance_bearing(lat1, lon1, lat2, lon2):
-    """Kilometres and initial bearing (deg true) from point 1 to point 2."""
+    """Kilometers and initial bearing (deg true) from point 1 to point 2."""
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dl = math.radians(lon2 - lon1)
     a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
@@ -363,7 +389,7 @@ def distance_bearing(lat1, lon1, lat2, lon2):
 
 
 def to_px(lat, lon):
-    """Local equirectangular projection centred on home, HEADING up."""
+    """Local equirectangular projection centered on home, HEADING up."""
     scale = (RADAR / 2) / RANGE_KM  # px per km
     ex = (lon - HOME_LON) * 111.32 * math.cos(math.radians(HOME_LAT))
     ny = (lat - HOME_LAT) * 110.57
@@ -375,7 +401,7 @@ def to_px(lat, lon):
 
 
 def night_box():
-    """The night view re-centres the day map in the whole visible area at the same scale:
+    """The night view re-centers the day map in the whole visible area at the same scale:
     returns its x shift and the area it shows, in day-map pixels."""
     x0, y0, x1, y1 = SAFE
     dx = (x0 + x1) / 2.0 - (MAP_BOX[0] + MAP_BOX[2]) / 2.0
@@ -415,7 +441,7 @@ _bbox, _glyphs = {}, {}
 
 class CachedDraw(ImageDraw.ImageDraw):
     """ImageDraw that renders each (string, font) once and pastes it after that.
-    FreeType rasterising was half the Kindle's frame time, and minute to minute
+    FreeType rasterizing was half the Kindle's frame time, and minute to minute
     most strings (cities, labels, the flight) don't change."""
 
     def textbbox(self, xy, text, font=None, *args, **kw):
@@ -456,7 +482,7 @@ def fit(d, s, f, width):
 
 
 def halo_text(d, xy, s, f, fill, r=3):
-    """Text with a paper-coloured halo. Drawn by offsetting instead of stroke_width,
+    """Text with a paper-colored halo. Drawn by offsetting instead of stroke_width,
     which segfaults against the Kindle's FreeType."""
     x, y = xy
     for dx in (-r, 0, r):
@@ -499,7 +525,7 @@ def turned_icon(char, px, angle, halo):
 
 
 def draw_icon(img, char, x, y, px, fill, angle=0, halo=4):
-    """Paste an icon centred on (x, y), turned clockwise by angle, with a paper halo."""
+    """Paste an icon centered on (x, y), turned clockwise by angle, with a paper halo."""
     m, rim = turned_icon(char, px, angle, halo)
     ox, oy = int(x - m.width / 2), int(y - m.height / 2)
     if rim is not None:
@@ -524,8 +550,9 @@ def lake_box():
 
 
 def lake_layer(shore, tint):
-    """The lake and shoreline never move, so draw them once per layout and reuse."""
-    key = (tint, HEADING, lake_box(), RADAR, RADAR_X, RADAR_Y)
+    """The lake and shoreline never move, so draw them once per layout and reuse. Home is
+    in the key: config.json is re-read every frame, and a new home must move the lake too."""
+    key = (tint, HEADING, HOME_LAT, HOME_LON, lake_box(), RADAR, RADAR_X, RADAR_Y)
     if key not in _lake:
         lake = Image.new("L", (W, H), PAPER)
         ld = ImageDraw.Draw(lake)
@@ -537,7 +564,7 @@ def lake_layer(shore, tint):
             ld.polygon(pts + [to_px(42.0, -77.0), to_px(42.0, -81.5)], fill=tint)
             ld.line(pts, fill=FAINT, width=3, joint="curve")
         _lake.clear()
-        _lake[key] = lake.crop(key[2])
+        _lake[key] = lake.crop(lake_box())
     return _lake[key]
 
 
@@ -595,7 +622,7 @@ def draw_radar(img, d, planes, shore, feat):
         lh = lf.size + (28 if sub else 0)
         for lx in (x + size + 8, x - size - 8 - bw):
             box = (lx - 4, y - lh // 2 - 4, lx + bw + 4, y + lh // 2 + 4)
-            if box[2] > MAP_BOX[2] or box[0] < MAP_BOX[0] or box[1] < MAP_BOX[1] or box[3] > MAP_BOX[3]:
+            if box[2] > LABEL_BOX[2] or box[0] < LABEL_BOX[0] or box[1] < LABEL_BOX[1] or box[3] > LABEL_BOX[3]:
                 continue
             if not any(box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in taken):
                 taken.append(box)
@@ -828,10 +855,7 @@ def record_positions(planes, when):
 
 
 def save_tracks():
-    tmp = TRACKS_PATH + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(TRACKS, f, separators=(",", ":"))
-    os.replace(tmp, TRACKS_PATH)
+    write_json(TRACKS_PATH, TRACKS, separators=(",", ":"))
 
 
 def battery_low(was_low):
@@ -876,6 +900,7 @@ def render_night(shore, tracks, note=None):
     n = len(tracks.get("hexes", []))
     caption = "%d flights today" % n if n else "No flights recorded today"
     full = caption + ("   " + note if note else "")
+    x0, y1 = TEXT[0], TEXT[3]
     d.rectangle((x0, y1 - 54, x0 + 24 + text_w(d, full, F["bodym"]), y1), fill=PAPER)
     d.text((x0 + 12, y1 - 46), caption, font=F["bodym"], fill=INK)
     if note:
@@ -906,15 +931,12 @@ def record_traffic(count, when):
     series[(lt.tm_hour * 3600 + lt.tm_min * 60) // BUCKET_S] = count
     for old in sorted(TRAFFIC)[:-2]:
         del TRAFFIC[old]
-    tmp = TRAFFIC_PATH + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(TRAFFIC, f)
-    os.replace(tmp, TRAFFIC_PATH)
+    write_json(TRAFFIC_PATH, TRAFFIC)
 
 
 def _filled(series, upto, half=9):
     """Carry the last reading forward over gaps (quiet hours fetch less often), then a
-    centred triangular mean over ~90 minutes so the shape reads as the day's rhythm,
+    centered triangular mean over ~90 minutes so the shape reads as the day's rhythm,
     not 5-minute noise. At the live edge the window just runs out of future points."""
     held, last = [], None
     for v in series[:upto]:
@@ -989,7 +1011,7 @@ def draw_traffic(d, x, y, w, h, now):
 def draw_panel_bold(d, planes, routes, frames, now, feat):
     """One flight, big: where it's going, how high and fast, how long left, who."""
     x, w = PANEL_X, PANEL_R - PANEL_X
-    top, bottom = SAFE[1], SAFE[3]
+    top, bottom = TEXT[1], TEXT[3]
     face = "InterDisplay-Bold.ttf"
     if not feat:
         # An outage must never pass for an empty sky
@@ -1080,7 +1102,7 @@ def draw_panel(d, planes, routes, frames, now, feat):
     """Right-hand column, in reading order of interest: where it's going, how it's
     flying, how far along it is, then who it is."""
     x, w = PANEL_X, PANEL_R - PANEL_X
-    top, bottom = SAFE[1], SAFE[3]
+    top, bottom = TEXT[1], TEXT[3]
     # Count and clock sit in the map's empty top-left corner
     d.text((MAP_BOX[0] + 12, top + 8), "%d aircraft" % len(planes), font=F["bodym"], fill=INK)
     d.text((MAP_BOX[0] + 12, top + 46), time.strftime("%-I:%M", now), font=F["small"], fill=DIM)
@@ -1172,7 +1194,7 @@ def render(planes, routes, frames, shore, now=None):
     feat = featured(planes, routes) if planes else None
     draw_radar(img, d, planes, shore, feat)
     (draw_panel_bold if STYLE.startswith("bold") else draw_panel)(d, planes, routes, frames, now, feat)
-    # No posterise step: the e-ink controller quantises to its 16 levels itself, and it cost 40 ms
+    # No posterize step: the e-ink controller quantizes to its 16 levels itself, and it cost 40 ms
     return img
 
 
@@ -1185,9 +1207,33 @@ for cand in ("/mnt/us/libkh/bin/fbink", "/var/local/kmc/bin/fbink", "/mnt/us/usb
         break
 
 
+def panel_size():
+    """The panel's native portrait size. Everything is drawn on the PW4's 1448x1072 canvas;
+    a smaller panel (a PW2's 758x1024 is the same shape) gets the frame scaled to fit."""
+    try:
+        with open("/sys/class/graphics/fb0/modes") as f:
+            m = re.match(r"\w+:(\d+)x(\d+)", f.read())  # "U:758x1024p-0"
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    except OSError:
+        pass
+    return H, W
+
+
+PANEL = panel_size()
+
+
 def turn(img):
-    """Clockwise quarter turns onto the panel. transpose() is a lossless row copy;
-    rotate() resamples every pixel and cost the Kindle a few hundred ms a frame."""
+    """Scale to the panel if it's smaller than the canvas, then clockwise quarter turns onto
+    it. transpose() is a lossless row copy; rotate() resamples every pixel and cost the
+    Kindle a few hundred ms a frame."""
+    size = (PANEL[1], PANEL[0]) if img.size[0] > img.size[1] else PANEL
+    if img.size != size:
+        # BILINEAR: 370 ms on a PW2 where LANCZOS took 830, and at this 0.7x scale the two
+        # are indistinguishable even magnified (Pillow widens either filter to the area)
+        img = img.resize(size, Image.BILINEAR)
+    if not ROTATE % 360:
+        return img
     return img.transpose({90: Image.ROTATE_270, 180: Image.ROTATE_180, 270: Image.ROTATE_90}[ROTATE % 360])
 
 
@@ -1200,15 +1246,26 @@ def show(path, flash):
     subprocess.call(args)
 
 
+LAST_CFG = None
+
+
 def load_config(args):
     """config.json beside this file overrides the defaults above; flags override config.json.
     Re-read every frame, so editing the file changes the display without a restart."""
-    global HEADING, ROTATE, HOME_LAT, HOME_LON, LOCAL_CITY, AIRPORTS, STYLE, POWER, NIGHT, FRONTLIGHT
+    global HEADING, ROTATE, HOME_LAT, HOME_LON, LOCAL_CITY, AIRPORTS, STYLE, POWER, NIGHT, FRONTLIGHT, PANEL_W_CFG, INSET
+    global LAST_CFG
     try:
-        with open(os.path.join(HERE, "config.json")) as f:
+        with open(getattr(args, "config", None) or os.path.join(HERE, "config.json")) as f:
             cfg = json.load(f)
-    except (OSError, ValueError):
-        cfg = {}
+        LAST_CFG = cfg
+    except (OSError, ValueError) as e:
+        # A typo, or Drive Mode taking /mnt/us away, must not reset the layout or switch off
+        # power saving: keep the last good config. Only a first read falls back to defaults
+        if LAST_CFG is None:
+            cfg = {}
+        else:
+            cfg = LAST_CFG
+            print("config.json unreadable, keeping the last good one: %r" % e, file=sys.stderr, flush=True)
     HEADING = cfg.get("heading", HEADING)
     ROTATE = cfg.get("rotate", ROTATE)
     HOME_LAT = cfg.get("lat", HOME_LAT)
@@ -1218,7 +1275,13 @@ def load_config(args):
     STYLE = cfg.get("style", STYLE) if cfg.get("style") in STYLES else STYLE
     POWER = cfg.get("power", {})
     NIGHT = tuple(cfg.get("night", NIGHT))  # ["23:00", "07:00"]
+    if cfg.get("tz"):
+        # POSIX form ("PST8PDT,M3.2.0,M11.1.0"): the Kindle has no zoneinfo to look names up in
+        os.environ["TZ"] = cfg["tz"]
+        time.tzset()
     FRONTLIGHT = int(cfg.get("frontlight", FRONTLIGHT))
+    PANEL_W_CFG = cfg.get("panel_w")
+    INSET = int(cfg.get("inset", 12))
     if args.heading is not None:
         HEADING = args.heading
     if args.rotate is not None:
@@ -1239,7 +1302,12 @@ def main():
     ap.add_argument("--sample", help="render from a saved {planes, routes, frames} JSON instead of the network")
     ap.add_argument("--night", action="store_true", help="with --sample: render the night constellation")
     ap.add_argument("--save-sample", help="also write the fetched data to this JSON (for design testing)")
+    ap.add_argument("--panel", help="preview another Kindle's panel, portrait WxH (758x1024 for a PW2)")
+    ap.add_argument("--config", help="read this instead of the config.json beside planes.py")
     args = ap.parse_args()
+    if args.panel:
+        global PANEL
+        PANEL = tuple(int(v) for v in args.panel.split("x"))
     load_config(args)
 
     with open(os.path.join(HERE, "shore.json")) as f:
@@ -1259,9 +1327,7 @@ def main():
         else:
             img = render(data["planes"], data["routes"], data["frames"], shore,
                          now=time.strptime(data.get("time", "2026-09-24 16:40"), "%Y-%m-%d %H:%M"))
-        if ROTATE:
-            img = turn(img)
-        img.save(frame_path)
+        turn(img).save(frame_path)
         print(frame_path)
         return
 
@@ -1287,7 +1353,7 @@ def main():
             if night_drawn != mode + day_key(now):
                 try:
                     img = render_night(shore, TRACKS, note="Battery low" if low else None)
-                    (turn(img) if ROTATE else img).save(frame_path)
+                    turn(img).save(frame_path)
                     show(frame_path, flash=True)
                     night_drawn = mode + day_key(now)
                     power.log("night_draw", mode=mode, points=len(TRACKS["pts"]), flights=len(TRACKS["hexes"]))
@@ -1355,9 +1421,7 @@ def main():
         STALE_SINCE = time.strftime("%-I:%M", time.localtime(fetched_at)) if stale and fetched_at else None
         try:
             img = render(visible, routes, frames, shore)
-            if ROTATE:
-                img = turn(img)
-            img.save(frame_path)
+            turn(img).save(frame_path)
             if not args.out:
                 flash = restyled or drawn - last_full > FULL_REFRESH_S
                 show(frame_path, flash=flash)
