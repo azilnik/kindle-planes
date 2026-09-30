@@ -445,6 +445,15 @@ def dash_line(d, pts, fill, width, on, off):
                 carry = on if drawing else off
 
 
+def claim_path(pts, half):
+    """Mark a drawn path as taken, a box every few pixels along it, so labels go beside it."""
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        n = max(1, int(math.hypot(x1 - x0, y1 - y0) // half))
+        for k in range(n + 1):
+            x, y = x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n
+            TAKEN.append((x - half, y - half, x + half, y + half))
+
+
 def compass_boxes(d):
     """Where N, E, S and W go, just outside the horizon, as boxes for labels to keep clear of."""
     boxes = []
@@ -504,6 +513,34 @@ def draw_dome(img, d, sky):
     d.ellipse((DOME_X - 19, DOME_Y - 19, DOME_X + 19, DOME_Y + 19), fill=GROUND)
     d.ellipse((DOME_X - 13, DOME_Y - 13, DOME_X + 13, DOME_Y + 13), fill=THING)
 
+    # Paths first, so no label ends up under a line: they claim their room like the marks
+    tr = sky.get("train")
+    if tr:
+        path = [dome_xy(k[1], k[2]) for k in tr["track"]]
+        dash_line(d, path, lit("train"), width=6, on=12, off=10)
+        claim_path(path, 10)
+    # The headline's pass if it's a station's, else the ISS's, once it's within the hour
+    ps = sky["hero"].get("pass_") or sky.get("pass")
+    lead = sky["hero"].get("name") if sky["hero"].get("pass_") else "ISS"
+    if ps and ps["rise"] <= sky["t"] + 3600:
+        pts = [(k[0], dome_xy(k[1], k[2])) for k in ps["track"]]
+        # Heavy enough to survive e-ink: flown part solid, the rest in long dashes
+        flown = [p for tt, p in pts if tt <= sky["t"]]
+        ahead = [p for tt, p in pts if tt > sky["t"]]
+        if flown and ahead:
+            ahead.insert(0, flown[-1])
+        if len(flown) > 1:
+            d.line(flown, fill=lit("station") if lead == hname else THING, width=14, joint="curve")
+        dash_line(d, ahead, lit("station") if lead == hname else THING, width=12, on=26, off=14)
+        claim_path([p for _, p in pts], 14)
+        # Arrowhead where it leaves
+        (xa, ya), (xb, yb) = pts[-2][1], pts[-1][1]
+        ang = math.atan2(yb - ya, xb - xa)
+        d.polygon([(xb + 42 * math.cos(ang), yb + 42 * math.sin(ang)),
+                   (xb + 32 * math.cos(ang + 2.4), yb + 32 * math.sin(ang + 2.4)),
+                   (xb + 32 * math.cos(ang - 2.4), yb + 32 * math.sin(ang - 2.4))],
+                  fill=lit("station") if lead == hname else THING)
+
     # Things below the horizon, ghosted on the ground outside it
     for th in [th for th in things if th.get("below") and th["kind"] == "moon"]:
         x, y = dome_xy(th["el"], th["az"])
@@ -551,9 +588,8 @@ def draw_dome(img, d, sky):
 
     tr = sky.get("train")
     if tr:
-        # The path they all follow, dashed, and a bead for each one up right now
+        # A bead for each one up right now, on the path drawn with the others above
         path = [dome_xy(k[1], k[2]) for k in tr["track"]]
-        dash_line(d, path, lit("train"), width=6, on=12, off=10)
         beads = [dome_xy(th["el"], th["az"]) for th in things if th["kind"] == "train"]
         for x, y in beads:
             icons.paste(img, icons.glyph("satellite", 30, lit("train")), x, y, dome)
@@ -572,26 +608,6 @@ def draw_dome(img, d, sky):
         draw_balloon(img, x, y, 56, lit("balloon"), dome, burst=not b["rising"])
         side_label(d, x, y, 36, "Balloon", BLABEL, lit("balloon"), dome)
 
-    # The headline's pass if it's a station's, else the ISS's, once it's within the hour
-    ps = sky["hero"].get("pass_") or sky.get("pass")
-    lead = sky["hero"].get("name") if sky["hero"].get("pass_") else "ISS"
-    if ps and ps["rise"] <= sky["t"] + 3600:
-        pts = [(k[0], dome_xy(k[1], k[2])) for k in ps["track"]]
-        # Heavy enough to survive e-ink: flown part solid, the rest in long dashes
-        flown = [p for tt, p in pts if tt <= sky["t"]]
-        ahead = [p for tt, p in pts if tt > sky["t"]]
-        if flown and ahead:
-            ahead.insert(0, flown[-1])
-        if len(flown) > 1:
-            d.line(flown, fill=lit("station") if lead == hname else THING, width=14, joint="curve")
-        dash_line(d, ahead, lit("station") if lead == hname else THING, width=12, on=26, off=14)
-        # Arrowhead where it leaves
-        (xa, ya), (xb, yb) = pts[-2][1], pts[-1][1]
-        ang = math.atan2(yb - ya, xb - xa)
-        d.polygon([(xb + 42 * math.cos(ang), yb + 42 * math.sin(ang)),
-                   (xb + 32 * math.cos(ang + 2.4), yb + 32 * math.sin(ang + 2.4)),
-                   (xb + 32 * math.cos(ang - 2.4), yb + 32 * math.sin(ang - 2.4))],
-                  fill=lit("station") if lead == hname else THING)
     for th in things:
         if th["kind"] == "station":
             x, y = dome_xy(th["el"], th["az"])
@@ -1023,43 +1039,22 @@ def draw_panel(d, sky):
         draw_year(d, sky, x0, y + 20, width, bottom)
         return
 
-    # How far: log scale, far at the top, one rung per kind of thing, in what room is left
+    # How far, as a plain list, farthest first: the order says it, no scale needed
     items = ladder_items(sky)
-    top, bot = y + 40, bottom - 10
-    if bot - top < 150:
+    top, gap = y + 30, 56
+    room = int((bottom - 10 - top) / gap)
+    if room < 1:
         return
-    lo, hi = 0.0, 15.0  # 1 km .. 10^15 km (about 100 light-years)
-
-    def ypos(km):
-        return bot - (math.log10(max(km, 1)) - lo) / (hi - lo) * (bot - top)
-
-    # As many rungs as fit a label apart; the farthest thing and the Moon matter most
-    gap = 60
-    room = min(4, int((bot - top) / gap) + 1)
     if len(items) > room:
+        # The farthest thing and the Moon matter most
         order = ("star", "moon", "station", "balloon", "pico", "train", "planet", "sun")
         items = sorted(sorted(items, key=lambda i: order.index(i[2]))[:room], key=lambda i: i[1])
-    rail = x0 + 12
-    d.line((rail, top, rail, bot), fill=FRAME, width=8)
-    rows = []
-    for name, km, kind in reversed(items):
-        want = ypos(km)
-        rows.append([name, km, kind, want, want])
-    for i, r in enumerate(rows):
-        if i and r[4] < rows[i - 1][4] + gap:
-            r[4] = rows[i - 1][4] + gap
-    if rows and rows[-1][4] > bot:
-        rows[-1][4] = bot
-        for i in range(len(rows) - 2, -1, -1):
-            if rows[i][4] > rows[i + 1][4] - gap:
-                rows[i][4] = rows[i + 1][4] - gap
-    for name, km, _kind, dot_y, lab_y in rows:
-        d.ellipse((rail - 13, dot_y - 13, rail + 13, dot_y + 13), fill=THING)
-        lx = rail + 40
-        d.line((rail + 10, dot_y, lx - 8, lab_y), fill=FRAME, width=4)
-        d.text((lx, lab_y - RUNG.size * 0.62), name, font=RUNG, fill=THING)
+    for i, (name, km, _kind) in enumerate(reversed(items)):
+        ly = top + i * gap
+        d.text((x0, ly), name, font=RUNG, fill=THING)
         nw = P.text_w(d, name, RUNG)
-        d.text((lx + nw + 14, lab_y - KM.size * 0.55), P.fit(d, fmt_km(km), KM, x1 - lx - nw - 14), font=KM, fill=SOFT)
+        d.text((x0 + nw + 14, ly + RUNG.size - KM.size - 1), P.fit(d, fmt_km(km), KM, x1 - x0 - nw - 14),
+               font=KM, fill=SOFT)
 
 
 def render(data, t, note=None):
