@@ -1,0 +1,41 @@
+# Power
+
+Measured on a PW4 on battery. `tools/battery.py power.log` prints these numbers from the
+device's log.
+
+| Setup | Draw | Per charge |
+|---|---|---|
+| Kindle UI stopped, Wi-Fi always on, redraw every 20 s | ~84 mA | ~18 h |
+| Suspend between redraws, Wi-Fi only for fetches | 20.5 mA | ~3 days |
+| Plus waiting for the e-ink refresh and Wi-Fi teardown before suspend | 13.5 mA | ~5 days |
+| In the frame, day-to-day | ~11 mA | ~5.5 days |
+
+## What the loop does
+
+- Redraws every minute from dead-reckoned positions: last track × ground speed, altitude
+  following the vertical rate. A fix older than 11 minutes is dropped rather than guessed.
+- Fetches every 10 minutes; every 5 when the featured plane is below 10,000 ft or about to
+  leave the map; every 15 when the sky is empty. Wi-Fi is on only for the fetch. Routes and
+  aircraft types for the next few candidate planes are looked up in the same window.
+- Suspends to RAM between, woken by the SoC RTC (`rtc1`; `rtc0` doesn't wake a PW4).
+- Night: one drawing, Wi-Fi off, no redraws until morning, a no-op wake every 30 minutes.
+- Near-empty battery: parks on the night drawing, since e-ink keeps the last image after
+  power is gone. Comes back at 10% or on a charger.
+
+## What each fix was worth
+
+A frame went from ~1.5 s to ~0.35 s of awake time: cache rasterised text and rotated
+icons, write PGM instead of PNG (7 ms instead of 500), transpose instead of rotate.
+
+Suspending while the screen was still refreshing hung the kernel about every 7th sleep and
+the watchdog rebooted the Kindle every ~12 minutes. `fbink -w` (wait for the panel) and
+waiting for `wifid` to drop before suspending fixed it.
+
+`wifid` can lose the network overnight and never retry. Failures escalate: radio cycle every
+3rd failure, restart `wifid` after about an hour, reboot after about three.
+
+Fetches used to fail when `wifid` reported connected before the link carried traffic. The
+fetch now retries twice within the same wake instead of paying for another Wi-Fi join.
+
+adsb.lol is fetched over plain HTTP on purpose: it's public position data, and a TLS
+handshake costs the Kindle's CPU about a second of awake time every fetch.

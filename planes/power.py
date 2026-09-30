@@ -1,0 +1,221 @@
+"""Kindle power controls: Wi-Fi duty cycling, CPU governor, sleeping between ticks,
+and a battery log to measure what each change is worth. Every call is a no-op off
+the Kindle so the renderer still runs on a laptop.
+
+Nothing here is on by default. config.json "power" turns pieces on once each one has
+been verified on the device:
+    {"wifi_toggle": true, "governor": "powersave", "suspend": false}
+"""
+
+import os
+import select
+import struct
+import subprocess
+import time
+
+KINDLE = os.path.exists("/usr/bin/lipc-set-prop")
+# On a PW4 the SoC's SNVS RTC is the one that wakes it from suspend-to-RAM; rtc0 (the
+# BD71827 PMIC) does not. Confirmed by travismorton1995/kindle-dash and katadelos/ktrmnl.
+WAKEALARM = "/sys/class/rtc/rtc1/wakealarm"
+# While this file exists the loop never suspends and keeps Wi-Fi up, so SSH stays reachable.
+HOLD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "HOLD")
+BAT = "/sys/class/power_supply/bd71827_bat"
+LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "power.log")
+LOG_MAX = 256 * 1024
+# Both report KEY_POWER on a PW4 (SoC SNVS and the BD71827 PMIC); watch both
+POWER_KEYS = ("/dev/input/event0", "/dev/input/event1")
+KEY_POWER = 116
+
+
+def _lipc_set(service, prop, value):
+    subprocess.call(["lipc-set-prop", service, prop, str(value)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _lipc_get(service, prop):
+    try:
+        return subprocess.check_output(["lipc-get-prop", service, prop],
+                                       stderr=subprocess.DEVNULL).decode().strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def _read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def set_governor(name):
+    if not KINDLE or not name:
+        return
+    try:
+        with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "w") as f:
+            f.write(name)
+    except OSError:
+        pass
+
+
+def wifi_up(timeout=40, reset=False):
+    """Turn Wi-Fi on and wait until wifid reports a connection. Returns seconds taken,
+    or None on timeout. reset=True power-cycles the radio and connection manager first,
+    which is what unsticks wifid after it gives up on a network. A no-op (0) off the Kindle."""
+    if not KINDLE:
+        return 0.0
+    start = time.time()
+    if reset:
+        _lipc_set("com.lab126.wifid", "enable", 0)
+        _lipc_set("com.lab126.cmd", "wirelessEnable", 0)
+        time.sleep(2)
+    if _lipc_get("com.lab126.wifid", "cmState") != "CONNECTED":
+        # Both switches: wirelessEnable is the radio, wifid enable the connection manager
+        _lipc_set("com.lab126.cmd", "wirelessEnable", 1)
+        _lipc_set("com.lab126.wifid", "enable", 1)
+    while time.time() - start < timeout:
+        if _lipc_get("com.lab126.wifid", "cmState") == "CONNECTED":
+            return time.time() - start
+        time.sleep(0.5)
+    return None
+
+
+_frontlight = None
+
+
+def set_frontlight(level):
+    """0-24 on powerd's scale. Only calls out when the level changes."""
+    global _frontlight
+    lit = _read("/sys/class/backlight/bl/brightness") not in ("", "0")
+    # Re-apply if the hardware disagrees (suspend can switch the LEDs off behind powerd)
+    if KINDLE and (level != _frontlight or bool(level) != lit):
+        _lipc_set("com.lab126.powerd", "flIntensity", int(level))
+        _frontlight = level
+
+
+def on_ac():
+    return KINDLE and _read("/sys/class/power_supply/bd71827_ac/online") == "1"
+
+
+def restart_wifid():
+    """Heavier than a radio cycle: restart the connection manager itself."""
+    if KINDLE:
+        subprocess.call(["restart", "wifid"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def reboot():
+    """Last resort for an unattended display. The upstart job restarts the loop on boot."""
+    if KINDLE:
+        log("reboot")
+        os.sync()
+        subprocess.call(["reboot"])
+
+
+def wifi_down():
+    """Radio off, then wait for wifid to finish tearing down so the driver isn't
+    suspended mid-disconnect."""
+    if KINDLE and not held():
+        _lipc_set("com.lab126.cmd", "wirelessEnable", 0)
+        start = time.time()
+        while time.time() - start < 5 and _lipc_get("com.lab126.wifid", "cmState") == "CONNECTED":
+            time.sleep(0.25)
+        time.sleep(0.5)
+
+
+def held():
+    return os.path.exists(HOLD)
+
+
+def battery():
+    """(percent, µAh left, µA average draw; negative = discharging, AC online)."""
+    if not KINDLE:
+        return None
+    return (_read(BAT + "/capacity"), _read(BAT + "/charge_now"),
+            _read(BAT + "/current_avg"), _read("/sys/class/power_supply/bd71827_ac/online"))
+
+
+def log(event, **fields):
+    """One line per event: epoch, event, battery snapshot, extra fields. Rotates at LOG_MAX."""
+    if not KINDLE:
+        return
+    bat = battery() or ("", "", "", "")
+    line = "%d %s cap=%s charge=%s avg=%s ac=%s %s\n" % (
+        time.time(), event, bat[0], bat[1], bat[2], bat[3],
+        " ".join("%s=%s" % kv for kv in sorted(fields.items())))
+    try:
+        if os.path.getsize(LOG) > LOG_MAX:
+            os.replace(LOG, LOG + ".1")
+    except OSError:
+        pass
+    with open(LOG, "a") as f:
+        f.write(line)
+
+
+def sleep_until(when, suspend=False):
+    """Idle until `when` (epoch). With suspend on, the Kindle deep-sleeps and the RTC
+    alarm wakes it. Returns "rtc", "button" (woke early: someone pressed power) or "idle"."""
+    left = when - time.time()
+    if left <= 0:
+        return "idle"
+    if suspend and KINDLE and left > 8 and not held():
+        return _suspend(when)
+    return _wait_awake(when)
+
+
+def _wait_awake(when):
+    """Sleep awake until `when`, returning "button" early if power is pressed."""
+    fds = []
+    for path in POWER_KEYS if KINDLE else ():
+        try:
+            fds.append(os.open(path, os.O_RDONLY | os.O_NONBLOCK))
+        except OSError:
+            pass
+    try:
+        while True:
+            left = when - time.time()
+            if left <= 0:
+                return "idle"
+            if not fds:
+                time.sleep(left)
+                return "idle"
+            for fd in select.select(fds, [], [], left)[0]:
+                data = os.read(fd, 16 * 64)
+                # struct input_event on armhf: timeval (2 x int32), type, code (u16), value (s32)
+                for i in range(0, len(data) - 15, 16):
+                    etype, code, value = struct.unpack_from("HHi", data, i + 8)
+                    if etype == 1 and code == KEY_POWER and value == 1:
+                        return "button"
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def _suspend(when):
+    seconds = int(when - time.time() + 0.999)
+    try:
+        # The kernel refuses to overwrite a pending alarm, so clear it first
+        with open(WAKEALARM, "w") as f:
+            f.write("0")
+        with open(WAKEALARM, "w") as f:
+            f.write("+%d" % seconds)
+        with open(WAKEALARM) as f:
+            armed = f.read().strip()
+    except OSError:
+        armed = ""
+    if not armed:
+        # Never suspend without a wake-up armed: that sleeps until someone presses power
+        time.sleep(max(0, when - time.time()))
+        return "idle"
+    os.sync()
+    try:
+        with open("/sys/power/state", "w") as f:
+            f.write("mem")  # blocks until resume
+    except OSError:
+        time.sleep(max(0, when - time.time()))
+        return "idle"
+    if time.time() >= when - 5:
+        # The alarm has one-second resolution and tends to fire just early; wait out the
+        # remainder here so the loop doesn't draw the same minute twice
+        time.sleep(max(0, when - time.time()))
+        return "rtc"
+    return "button"

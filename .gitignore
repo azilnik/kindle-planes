@@ -1,0 +1,15 @@
+# Written on the device at runtime
+planes/cache.json
+planes/traffic.json
+planes/tracks.json*
+planes/power.log*
+planes/HOLD
+planes/DISABLED
+planes/measure_start
+__pycache__/
+.DS_Store
+out/
+insert/*.stl
+insert/*.3mf
+insert/preview-*.png
+insert/render-*.png
