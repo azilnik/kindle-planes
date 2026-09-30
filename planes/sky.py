@@ -1247,9 +1247,8 @@ class Frame:
         return img
 
     def moving(self, now):
-        """Minute redraws while a pass or train is on or a balloon flies."""
-        if self.balloon:
-            return True
+        """Minute redraws while a pass or train is on: they cross the sky in minutes. Not for
+        balloons, which only move when new data comes in, every 5 minutes with the fetch."""
         tr = self.sky.get("train")
         return any(ps["rise"] - 1800 <= now <= ps["set"] for _, ps in self.sky.get("passes", [])) or \
             bool(tr and tr["start"] - 900 <= now <= tr["end"])
