@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """The sky frame: everything above the house. The sky as you'd see it lying on the lawn
-looking up (zenith in the middle, north up, east on the left), with planes, the nearest
-weather balloon, the ISS and fresh Starlink trains, the Moon, planets and stars on it, a
+looking up (zenith in the middle, north up, east on the left), with the nearest weather
+balloon, the ISS and fresh Starlink trains, the Moon, planets and stars on it, a
 headline for the one thing worth looking up for, and a ladder of how far away each is.
 
-Data: planes from the planes frame's ADS-B fetch; satellite orbits from CelesTrak once a
-day; the balloon from SondeHub around the twice-daily launches (Buffalo's, from Toronto). The Sun, Moon, planets and
+Data: satellite orbits from CelesTrak once a day, and the balloon from SondeHub around the
+twice-daily launches (Buffalo's, from Toronto). Wi-Fi goes on only for those. The Sun, Moon, planets and
 stars are computed on the device, so the sky still draws with no network at all.
 
 Preview:  python planes/sky.py --sample planes/samples/sky/night.json --out out/sky.png
@@ -33,13 +33,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 KM_PER_LY = 9.4607e12
 with open(os.path.join(HERE, "stars", "stars.json")) as _f:
     SKY = json.load(_f)
-BODY = P.font("Inter-SemiBold.ttf", 40)
+# The bold style's type: InterDisplay-Bold for headlines and numbers, Inter-Bold for names
+HEAD = "InterDisplay-Bold.ttf"
+LABEL = P.font("Inter-Bold.ttf", 32)
+SMALL = P.font("Inter-Bold.ttf", 24)
+KM = P.font("Inter-SemiBold.ttf", 28)
+COMPASS = P.font("Inter-Bold.ttf", 34)
 # Things down to this far below the horizon show outside the dome as ghosts
 BELOW = 30
-# Page colors: paper by day, the whole page goes dark with the sky
-DAY = dict(bg=P.PAPER, fg=P.INK, dim=P.DIM, faint=P.FAINT, bar=P.FAINT_BAR)
-NIGHT = dict(bg=0, fg=P.PAPER, dim=170, faint=110, bar=64)
-T = DAY
+# Always a dark page, day and night: white linework on black, like the night sky
+T = dict(bg=0, fg=P.PAPER, dim=190, faint=130, bar=110)
 
 
 # ---------- where things are ----------
@@ -85,11 +88,6 @@ def build(data, t):
     lat, lon = P.HOME_LAT, P.HOME_LON
     sky = {"t": t, "sun_el": astro.sun_alt(t, lat, lon), "things": []}
     add = sky["things"].append
-
-    for p in data["planes"]:
-        el, az, rng = seen_from_home(p["lat"], p["lon"], p["alt"] * 0.0003048)
-        if el > 2:
-            add(dict(kind="plane", name=p["name"], el=el, az=az, km=rng, track=p["track"], alt=p["alt"]))
 
     b = data.get("balloon")
     if b:
@@ -191,9 +189,9 @@ def crossing(el_at, t, rising, span=18 * 3600, step=120):
 def star_dot(img, d, x, y, mag, fill):
     if mag < 0.6:
         # The handful of brightest stars twinkle
-        icons.paste(img, icons.glyph("sparkle", 18, fill), x, y, 0)
+        icons.paste(img, icons.glyph("sparkle", 24, fill), x, y, 0)
         return
-    r = max(1.2, 4.6 - mag * 0.95)
+    r = max(2.0, 6.4 - mag * 1.2)
     d.ellipse((x - r, y - r, x + r, y + r), fill=fill)
 
 
@@ -225,7 +223,7 @@ def star_layer(t, limit, line_fill, star_fill):
         pts = [xy(ra, dec) for ra, dec in seg]
         for a, b in zip(pts, pts[1:]):
             if a and b:
-                d.line((a, b), fill=line_fill, width=2)
+                d.line((a, b), fill=line_fill, width=4)
     for ra, dec, mag in SKY["stars"]:
         if mag <= limit:
             p = xy(ra, dec)
@@ -248,9 +246,9 @@ def draw_stars(img, d, t, limit, name_fill, line_fill, star_fill, taken):
             continue
         p = dome_xy(el, az)
         if inside(*p, 40):
-            w = P.text_w(d, name, P.F["tiny"])
-            lx = p[0] + 9 if p[0] < DOME_X + DOME_R / 2 else p[0] - 9 - w
-            d.text((lx, p[1] - 12), name, font=P.F["tiny"], fill=name_fill)
+            w = P.text_w(d, name, SMALL)
+            lx = p[0] + 11 if p[0] < DOME_X + DOME_R / 2 else p[0] - 11 - w
+            d.text((lx, p[1] - 13), name, font=SMALL, fill=name_fill)
             taken.append((lx - 6, p[1] - 16, lx + w + 6, p[1] + 16))
 
 
@@ -332,12 +330,11 @@ def dash_line(d, pts, fill, width, on, off):
 
 
 def draw_dome(img, d, sky):
-    night = sky["sun_el"] < -5
     dome, ink = T["bg"], T["fg"]
     R = DOME_R
-    ghost = 120
+    ghost = 150
     # Solid page, sky and ground alike: only the horizon line says where the sky ends
-    d.ellipse((DOME_X - R, DOME_Y - R, DOME_X + R, DOME_Y + R), outline=140 if night else P.FAINT, width=3)
+    d.ellipse((DOME_X - R, DOME_Y - R, DOME_X + R, DOME_Y + R), outline=T["fg"], width=7)
 
     things = sky["things"]
     del TAKEN[:]
@@ -346,23 +343,23 @@ def draw_dome(img, d, sky):
         # hold room for their names so a star's name doesn't take it
         x, y = dome_xy(th["el"], th["az"])
         if th["kind"] == "balloon":
-            TAKEN.append((x - 24, y - 26, x + 24, y + 26))
+            TAKEN.append((x - 30, y - 32, x + 30, y + 32))
             continue
-        r = {"moon": 28, "station": 34, "sun": 30, "train": 14, "planet": 14}.get(th["kind"], 8)
+        r = {"moon": 36, "station": 40, "sun": 36, "train": 18, "planet": 18}.get(th["kind"], 10)
         TAKEN.append((x - r, y - r, x + r, y + r))
     held = [(x - 130, y - 40, x + 130, y + 40) for x, y in
             (dome_xy(th["el"], th["az"]) for th in things if th["kind"] in ("moon", "planet") and not th.get("below"))]
     limit = mag_limit(sky["sun_el"])
     if limit:
-        draw_stars(img, d, sky["t"], limit, 150, 64, P.PAPER, TAKEN + held)
+        draw_stars(img, d, sky["t"], limit, 210, 140, P.PAPER, TAKEN + held)
     sun_ra, sun_dec, _ = astro.sun(sky["t"])
     sel, saz = astro.alt_az(sun_ra, sun_dec, sky["t"], P.HOME_LAT, P.HOME_LON)
     sun_xy = dome_xy(sel, saz)  # off the dome when it's down, which still points the right way
 
-    # Home: straight up, the same plain crosshair as the planes map
-    r = 13
-    d.line((DOME_X - r, DOME_Y, DOME_X + r, DOME_Y), fill=ink, width=3)
-    d.line((DOME_X, DOME_Y - r, DOME_X, DOME_Y + r), fill=ink, width=3)
+    # Home: straight up, a plain crosshair
+    r = 18
+    d.line((DOME_X - r, DOME_Y, DOME_X + r, DOME_Y), fill=ink, width=6)
+    d.line((DOME_X, DOME_Y - r, DOME_X, DOME_Y + r), fill=ink, width=6)
 
     # Things below the horizon, ghosted on the ground outside it
     for th in [th for th in things if th.get("below")]:
@@ -370,55 +367,49 @@ def draw_dome(img, d, sky):
         if not (SKY_BOX[0] + 30 < x < SKY_BOX[2] - 30 and SKY_BOX[1] + 30 < y < SKY_BOX[3] - 30):
             continue
         if th["kind"] == "moon":
-            icons.paste(img, moon_icon(22, th["frac"], th["waxing"], x, y, sun_xy, True, ghost), x, y, dome)
+            icons.paste(img, moon_icon(26, th["frac"], th["waxing"], x, y, sun_xy, True, ghost), x, y, dome)
         else:
-            rr = 16 if th["kind"] == "sun" else 6
-            d.ellipse((x - rr, y - rr, x + rr, y + rr), outline=ghost, width=3)
+            rr = 18 if th["kind"] == "sun" else 8
+            d.ellipse((x - rr, y - rr, x + rr, y + rr), outline=ghost, width=5)
         lab = th["name"] + (" rises " + clock(th["rises"]) if th.get("rises") else "")
-        w = P.text_w(d, lab, P.F["tiny"])
-        lx = min(max(x - w / 2, SKY_BOX[0] + 8), SKY_BOX[2] - 8 - w)
-        d.text((lx, y + 24), lab, font=P.F["tiny"], fill=ghost)
+        w = P.text_w(d, lab, SMALL)
+        lx = min(max(x - w / 2, SKY_BOX[0]), SKY_BOX[2] - w)
+        d.text((lx, y + 28), lab, font=SMALL, fill=ghost)
 
     for th in [th for th in things if not th.get("below")]:
         x, y = dome_xy(th["el"], th["az"])
         if th["kind"] == "moon":
-            icons.paste(img, moon_icon(26, th["frac"], th["waxing"], x, y, sun_xy, night), x, y, dome)
+            icons.paste(img, moon_icon(34, th["frac"], th["waxing"], x, y, sun_xy, True), x, y, dome)
             near = [p["name"] for p in things if p["kind"] == "planet" and not p.get("below")
                     and math.hypot(*(a - b for a, b in zip(dome_xy(p["el"], p["az"]), (x, y)))) < 72]
-            side_label(d, x, y, 36, " & ".join(["Moon"] + near), P.F["small"], ink, dome, dy=-30)
+            side_label(d, x, y, 44, " & ".join(["Moon"] + near), LABEL, ink, dome, dy=-30)
         elif th["kind"] == "planet":
             # Ringed for the giants, a sparkle for Venus, a plain dot for Mars
-            icon = {"Venus": ("sparkle", 26), "Mars": ("dot", 12)}.get(th["name"], ("planet", 30))
+            icon = {"Venus": ("sparkle", 34), "Mars": ("dot", 16)}.get(th["name"], ("planet", 38))
             icons.paste(img, icons.glyph(icon[0], icon[1], ink), x, y, dome)
             if not moon_near(things, x, y):
-                side_label(d, x, y, 18, th["name"], P.F["small"], ink, dome, dy=4)
+                side_label(d, x, y, 24, th["name"], LABEL, ink, dome, dy=4)
         elif th["kind"] == "sun":
-            icons.paste(img, icons.glyph("sun", 56, ink), x, y, dome)
-            side_label(d, x, y, 40, "Sun", P.F["small"], ink, dome)
+            icons.paste(img, icons.glyph("sun", 68, ink), x, y, dome)
+            side_label(d, x, y, 46, "Sun", LABEL, ink, dome)
 
     tr = sky.get("train")
     if tr:
-        # The path they all follow, thin, and a bead for each one up right now
+        # The path they all follow, dashed, and a bead for each one up right now
         path = [dome_xy(k[1], k[2]) for k in tr["track"]]
-        dash_line(d, path, ink, width=3, on=8, off=10)
+        dash_line(d, path, ink, width=6, on=12, off=10)
         beads = [dome_xy(th["el"], th["az"]) for th in things if th["kind"] == "train"]
         for x, y in beads:
-            icons.paste(img, icons.glyph("satellite", 24, ink), x, y, dome)
+            icons.paste(img, icons.glyph("satellite", 30, ink), x, y, dome)
         at = min(beads, key=lambda b: b[1]) if beads else path[len(path) // 2]
-        side_label(d, at[0], at[1], 22, "Starlink", P.F["label"], ink, dome)
-
-    for th in sorted((th for th in things if th["kind"] == "plane"), key=lambda th: th["km"])[:12]:
-        x, y = dome_xy(th["el"], th["az"])
-        # Mirrored like the rest of the view from below, so turn by minus the track
-        turn = int(round((-(th["track"] or 0) + P.HEADING) % 360 / 5.0)) * 5
-        icons.paste(img, icons.glyph("plane", 32, ink, turn), x, y, dome)
+        side_label(d, at[0], at[1], 26, "Starlink", P.F["blabel"], ink, dome)
 
     b = next((th for th in things if th["kind"] == "balloon"), None)
     if b:
         # Nudged up off the horizon line when it's very low, so the whole icon shows
         x, y = dome_xy(max(b["el"], 5), b["az"])
-        draw_balloon(img, x, y, 46, ink, dome, burst=not b["rising"])
-        side_label(d, x, y, 30, "Balloon", P.F["label"], ink, dome)
+        draw_balloon(img, x, y, 56, ink, dome, burst=not b["rising"])
+        side_label(d, x, y, 36, "Balloon", P.F["blabel"], ink, dome)
 
     ps = sky.get("pass")
     if ps and ps["rise"] <= sky["t"] + 3600:
@@ -429,26 +420,26 @@ def draw_dome(img, d, sky):
         if flown and ahead:
             ahead.insert(0, flown[-1])
         if len(flown) > 1:
-            d.line(flown, fill=ink, width=8, joint="curve")
-        dash_line(d, ahead, ink, width=6, on=18, off=12)
+            d.line(flown, fill=ink, width=14, joint="curve")
+        dash_line(d, ahead, ink, width=12, on=26, off=14)
         # Arrowhead where it leaves
         (xa, ya), (xb, yb) = pts[-2][1], pts[-1][1]
         ang = math.atan2(yb - ya, xb - xa)
-        d.polygon([(xb + 26 * math.cos(ang), yb + 26 * math.sin(ang)),
-                   (xb + 20 * math.cos(ang + 2.4), yb + 20 * math.sin(ang + 2.4)),
-                   (xb + 20 * math.cos(ang - 2.4), yb + 20 * math.sin(ang - 2.4))], fill=ink)
+        d.polygon([(xb + 42 * math.cos(ang), yb + 42 * math.sin(ang)),
+                   (xb + 32 * math.cos(ang + 2.4), yb + 32 * math.sin(ang + 2.4)),
+                   (xb + 32 * math.cos(ang - 2.4), yb + 32 * math.sin(ang - 2.4))], fill=ink)
     for th in things:
         if th["kind"] == "station":
             x, y = dome_xy(th["el"], th["az"])
-            icon = icons.glyph("satellite", 60, ink)
+            icon = icons.glyph("satellite", 70, ink)
             icons.paste(img, icon, x, y, dome)
             side_label(d, x, y - 4, icon[0].width // 2 + 10, th["name"], P.F["blabel"], ink, dome)
 
     # Compass letters around the dome
     for lab, az in (("N", 0), ("E", 90), ("S", 180), ("W", 270)):
-        x, y = dome_xy(-5, az)
-        w = P.text_w(d, lab, P.F["label"])
-        d.text((x - w / 2, y - 18), lab, font=P.F["label"], fill=T["dim"])
+        x, y = dome_xy(-5.5, az)
+        w = P.text_w(d, lab, COMPASS)
+        d.text((x - w / 2, y - 20), lab, font=COMPASS, fill=ink)
 
 
 # ---------- panel ----------
@@ -484,38 +475,66 @@ def when_clock(t, now):
                                       time.strftime("%a ", time.localtime(t)) + clock(t))
 
 
-def pass_lines(ps):
-    return "rises %s %s, gone %s %s" % (P.compass(ps["rise_az"]), clock(ps["rise"]),
-                                        P.compass(ps["set_az"]), clock(ps["set"]))
+def day_word(t, now):
+    """When, in the caps under a time, since the clock has no am or pm: TONIGHT, TOMORROW AM."""
+    lt = time.localtime(t)
+    days = round((time.mktime(lt[:3] + (12, 0, 0, 0, 0, -1)) -
+                  time.mktime(time.localtime(now)[:3] + (12, 0, 0, 0, 0, -1))) / 86400)
+    half = "AM" if lt.tm_hour < 12 else "PM"
+    if days == 0:
+        return "TONIGHT" if lt.tm_hour >= 18 else ("THIS MORNING" if half == "AM" else "THIS AFTERNOON")
+    if days == 1:
+        return "TOMORROW " + half
+    return time.strftime("%a ", lt).upper() + half
+
+
+def countdown(start, end, t):
+    """The line under the path: how long until it starts, or that it's up now."""
+    if t >= start:
+        return "Up now" if t <= end else "Gone"
+    mins = (start - t) / 60
+    if mins < 90:
+        return "In %d min" % max(1, round(mins))
+    return "Up for %d min" % max(1, round((end - start) / 60))
+
+
+def along(start, end, t):
+    return min(1.0, max(0.0, (t - start) / float(max(1, end - start))))
 
 
 def hero(sky):
-    """The one thing worth looking up for, in priority order: (its kind, headline, two lines)."""
+    """The one thing worth looking up for, in priority order, set out like the planes
+    frame's flight: a headline, two big numbers, a path from where it rises to where it
+    sets with the thing on it, and a line under that."""
     t, ps, things, tr = sky["t"], sky.get("pass"), sky["things"], sky.get("train")
-    up = "overhead" if ps and ps["peak_el"] > 60 else "%d° up" % (ps["peak_el"] if ps else 0)
     iss_now = ps and ps["rise"] - 300 <= t <= ps["set"]
     if tr and not iss_now:
-        return "train", "Starlink train", "%d satellites in a line" % tr["n"], \
-            "%s to %s, %s–%s" % (P.compass(tr["rise_az"]), P.compass(tr["set_az"]), clock(tr["start"]), clock(tr["end"]))
+        return dict(kind="train", head="Starlink train",
+                    stats=[("%d" % tr["n"], "IN A LINE"), (clock(tr["start"]), day_word(tr["start"], t))],
+                    path=(P.compass(tr["rise_az"]), P.compass(tr["set_az"]), along(tr["start"], tr["end"], t)),
+                    foot=countdown(tr["start"], tr["end"], t))
     if ps and ps["rise"] - 2700 <= t <= ps["set"]:
-        mins = (ps["peak"] - t) / 60
-        if ps["rise"] - t > 5 * 60:
-            return "station", "ISS at %s" % clock(ps["peak"]), "%s · in %d min" % (up, round(mins)), pass_lines(ps)
-        when = "overhead now" if abs(mins) < 0.75 else ("in %d min" % round(mins) if mins > 0 else "going away")
-        head = "ISS overhead" if ps["peak_el"] > 60 else "ISS pass"
-        return "station", head, "%s · peaks %d° up" % (when, ps["peak_el"]), pass_lines(ps)
+        return dict(kind="station", head="ISS overhead" if ps["peak_el"] > 60 else "ISS pass",
+                    stats=[(clock(ps["peak"]), day_word(ps["peak"], t)), ("%d°" % ps["peak_el"], "UP")],
+                    path=(P.compass(ps["rise_az"]), P.compass(ps["set_az"]), along(ps["rise"], ps["set"], t)),
+                    foot=countdown(ps["rise"], ps["set"], t))
     b = next((th for th in things if th["kind"] == "balloon"), None)
     if b:
-        return "balloon", "Weather balloon", "%.0f km up, %s" % (b["alt_km"], "climbing" if b["rising"] else "falling"), \
-            "from %s · look %s, %d° up" % (launch_site(b["track"][0]), P.compass(b["az"]), b["el"])
+        return dict(kind="balloon", head="Weather balloon",
+                    stats=[("%.0f" % b["alt_km"], "KM UP"), ("%d°" % max(0, b["el"]), "UP IN THE " + P.compass(b["az"]))],
+                    foot=("Climbing" if b["rising"] else "Falling") + ", from " + launch_site(b["track"][0]))
     moon = next((th for th in things if th["kind"] == "moon" and not th.get("below")), None)
     if moon and sky["sun_el"] < 0:
-        return "moon", moon_phase(moon["frac"], moon["waxing"]), \
-            "%d° up in the %s" % (moon["el"], P.compass(moon["az"])), \
-            "sets %s" % when_clock(moon["sets"], t) if moon.get("sets") else ""
+        return dict(kind="moon", head=moon_phase(moon["frac"], moon["waxing"]),
+                    stats=[("%d°" % moon["el"], "UP IN THE " + P.compass(moon["az"])),
+                           ("%d%%" % round(moon["frac"] * 100), "LIT")],
+                    foot="Sets %s" % when_clock(moon["sets"], t) if moon.get("sets") else None)
     if ps:
-        return "station", "Next ISS pass", "%s · %s" % (when_clock(ps["peak"], t), up), pass_lines(ps)
-    return None, "Clear above", "", ""
+        return dict(kind="station", head="Next ISS pass",
+                    stats=[(clock(ps["peak"]), day_word(ps["peak"], t)), ("%d°" % ps["peak_el"], "UP")],
+                    path=(P.compass(ps["rise_az"]), P.compass(ps["set_az"]), 0.0),
+                    foot=countdown(ps["rise"], ps["set"], t))
+    return dict(kind=None, head="Clear above", stats=[])
 
 
 def launch_site(fix):
@@ -533,9 +552,6 @@ SONDE_SITES = (("Buffalo", 42.94, -78.72), ("Detroit", 42.70, -83.47), ("Albany"
 
 def ladder_items(sky):
     items, things = [], sky["things"]
-    planes = sorted((th for th in things if th["kind"] == "plane"), key=lambda th: th["km"])
-    if planes:
-        items.append((planes[0]["name"], planes[0]["km"], "plane"))
     for kind in ("balloon", "station", "train", "moon", "sun", "planet"):
         for th in sorted((th for th in things if th["kind"] == kind and not th.get("below")), key=lambda th: th["km"])[:1]:
             items.append((th["name"], th["km"], kind))
@@ -575,13 +591,13 @@ def draw_balloon_side(d, b, x0, y, width):
     lat0, lon0 = tr[0][1], tr[0][2]
     pts = [((lo - lon0) * 111.32 * math.cos(math.radians(lat0)), a / 1000) for _, la, lo, a in tr]
     top_km = max(35.0, pts[-1][1])
-    cw, ch = width - P.text_w(d, "30 km", P.F["tiny"]) - 16, 150
+    cw, ch = width - P.text_w(d, "30 km", SMALL) - 16, 150
     turn = wind_turn(pts)
     tx_km = next(x for x, a in pts if a >= turn) if turn else None
     xs = [x for x, _ in pts]
     lo_km, hi_km = min(xs), max(xs)
     # Room for "wind turns" on the outside of the bend, where the line isn't
-    room = P.text_w(d, "wind turns", P.F["tiny"]) + 24
+    room = P.text_w(d, "wind turns", SMALL) + 24
     west_bend = turn is not None and tx_km - lo_km < hi_km - tx_km
     lpad, rpad = (room, 16) if west_bend else (16, room if turn else 16)
     per_km = min((cw - lpad - rpad) / max(hi_km - lo_km, 0.1), cw / 8.0)  # small drifts stay small
@@ -593,53 +609,92 @@ def draw_balloon_side(d, b, x0, y, width):
 
     for km in (10, 20, 30):
         gy = xy(0, km)[1]
-        d.line((x0, gy, x0 + cw, gy), fill=T["bar"], width=1)
-        d.text((x0 + cw + 10, gy - 12), "%d km" % km, font=P.F["tiny"], fill=T["dim"])
-    d.line((x0, y + ch, x0 + cw, y + ch), fill=T["faint"], width=2)
-    d.line([xy(x, a) for x, a in pts], fill=T["fg"], width=4, joint="curve")
+        d.line((x0, gy, x0 + cw, gy), fill=T["bar"], width=3)
+        d.text((x0 + cw + 10, gy - 13), "%d km" % km, font=SMALL, fill=T["fg"])
+    d.line((x0, y + ch, x0 + cw, y + ch), fill=T["fg"], width=5)
+    d.line([xy(x, a) for x, a in pts], fill=T["fg"], width=8, joint="curve")
     nx, ny = xy(*pts[-1])
-    draw_balloon(P.CANVAS, nx, ny, 28, T["fg"], T["bg"], burst=not b["rising"])
+    draw_balloon(P.CANVAS, nx, ny, 36, T["fg"], T["bg"], burst=not b["rising"])
     if turn:
         tx, ty = xy(tx_km, turn)
         lab = "wind turns"
-        lx = tx - 14 - P.text_w(d, lab, P.F["tiny"]) if west_bend else tx + 14
-        d.text((lx, ty - 12), lab, font=P.F["tiny"], fill=T["dim"])
+        lx = tx - 14 - P.text_w(d, lab, SMALL) if west_bend else tx + 14
+        d.text((lx, ty - 13), lab, font=SMALL, fill=T["fg"])
     lab = "west      drift      east"
-    d.text((x0 + cw / 2 - P.text_w(d, lab, P.F["tiny"]) / 2, y + ch + 6), lab, font=P.F["tiny"], fill=T["dim"])
-    return y + ch + 34
+    d.text((x0 + cw / 2 - P.text_w(d, lab, SMALL) / 2, y + ch + 6), lab, font=SMALL, fill=T["dim"])
+    return y + ch + 44
+
+
+def draw_stats(d, x, y, w, stats):
+    """Two big numbers with their caps under them, as the planes frame's height and speed."""
+    sf = P.F["bstat"]
+    cols = [max(P.text_w(d, v, sf), P.text_w(d, lab, P.F["apt"]), 170) for v, lab in stats]
+    while sf.size > 52 and sum(cols) + 44 * (len(cols) - 1) > w:
+        sf = P.font(HEAD, sf.size - 4)
+        cols = [max(P.text_w(d, v, sf), P.text_w(d, lab, P.F["apt"]), 150) for v, lab in stats]
+    sx = x
+    for (value, lab), cw in zip(stats, cols):
+        d.text((sx, y), value, font=sf, fill=T["fg"])
+        d.text((sx + 2, y + sf.size + 10), lab, font=P.F["apt"], fill=T["fg"])
+        sx += cw + 44
+    return y + 150
+
+
+def draw_path(d, x, y, w, rise, sets, frac, icon):
+    """Where it comes up and where it goes down, solid for the part it has crossed, with
+    the thing itself on the line: the planes frame's progress bar, for the sky."""
+    ly = y + 10
+    fx = x + 22 + int((w - 44) * frac)
+    d.line((fx, ly, x + w, ly), fill=T["bar"], width=8)
+    d.line((x, ly, fx, ly), fill=T["fg"], width=8)
+    d.ellipse((x - 1, ly - 9, x + 17, ly + 9), fill=T["fg"])
+    d.ellipse((x + w - 18, ly - 9, x + w, ly + 9), outline=T["fg"], width=5, fill=T["bg"])
+    icons.paste(P.CANVAS, icons.glyph(icon, 50, T["fg"], 0, 6), fx, ly, T["bg"])
+    d.text((x, y + 40), rise, font=P.F["apt"], fill=T["fg"])
+    d.text((x + w - P.text_w(d, sets, P.F["apt"]), y + 40), sets, font=P.F["apt"], fill=T["fg"])
+    return y + 80
 
 
 def draw_panel(d, sky):
-    x0, x1 = PANEL_X, P.TEXT[2]
+    x0, x1 = PANEL_X, PANEL_R
     width = x1 - x0
-    y = P.TEXT[1] + 4
-    kind, head, sub, line = hero(sky)
-    hf = P.fit_font(d, head, "InterDisplay-Bold.ttf", 76, width)
-    d.text((x0 - 3, y), head, font=hf, fill=T["fg"])
-    y += hf.size + 18
-    if sub:
-        d.text((x0, y), P.fit(d, sub, BODY, width), font=BODY, fill=T["fg"])
-        y += 52
-    if line:
-        d.text((x0, y), P.fit(d, line, P.F["small"], width), font=P.F["small"], fill=T["dim"])
-        y += 40
-
-    if kind == "balloon":
+    y = P.TEXT[1] - 6
+    h = hero(sky)
+    for ln, f in P.wrap(d, h["head"], HEAD, 96, width):
+        d.text((x0, y), ln, font=f, fill=T["fg"])
+        y += f.size + 4
+    y += 30
+    if h["stats"]:
+        y = draw_stats(d, x0, y, width, h["stats"])
+    if h.get("path"):
+        y = draw_path(d, x0, y + 14, width, *h["path"], icon="satellite")
+    if h["kind"] == "balloon":
         b = next(th for th in sky["things"] if th["kind"] == "balloon")
-        y = draw_balloon_side(d, b, x0, y + 10, width) + 14
+        y = draw_balloon_side(d, b, x0, y - 30, width)
+    if h.get("foot"):
+        ff = P.fit_font(d, h["foot"], HEAD, 52, width)
+        d.text((x0, y), h["foot"], font=ff, fill=T["fg"])
+        y += ff.size + 20
 
-    # How far: log scale, far at the top, one rung per kind of thing
+    # How far: log scale, far at the top, one rung per kind of thing, in what room is left
     items = ladder_items(sky)
-    top, bot = y + 50, P.TEXT[3] - 20
+    top, bot = y + 40, P.TEXT[3] - 20
+    if bot - top < 120:
+        return
     lo, hi = 0.0, 15.0  # 1 km .. 10^15 km (about 100 light-years)
 
     def ypos(km):
         return bot - (math.log10(max(km, 1)) - lo) / (hi - lo) * (bot - top)
 
-    rail = x0 + 14
-    d.line((rail, top, rail, bot), fill=T["bar"], width=4)
-    # Space labels at least a rung apart, keeping them in order
-    gap, rows = min(58, (bot - top) / max(1, len(items) - 1)), []
+    # As many rungs as fit a label apart; the farthest thing and the Moon matter most
+    gap = 46
+    room = int((bot - top) / gap) + 1
+    if len(items) > room:
+        order = ("star", "moon", "station", "balloon", "train", "planet", "sun")
+        items = sorted(sorted(items, key=lambda i: order.index(i[2]))[:room], key=lambda i: i[1])
+    rail = x0 + 12
+    d.line((rail, top, rail, bot), fill=T["bar"], width=8)
+    rows = []
     for name, km, kind in reversed(items):
         want = ypos(km)
         rows.append([name, km, kind, want, want])
@@ -652,19 +707,16 @@ def draw_panel(d, sky):
             if rows[i][4] > rows[i + 1][4] - gap:
                 rows[i][4] = rows[i + 1][4] - gap
     for name, km, _kind, dot_y, lab_y in rows:
-        d.ellipse((rail - 9, dot_y - 9, rail + 9, dot_y + 9), fill=T["fg"])
+        d.ellipse((rail - 11, dot_y - 11, rail + 11, dot_y + 11), fill=T["fg"])
         lx = rail + 40
-        d.line((rail + 10, dot_y, lx - 8, lab_y), fill=T["faint"], width=2)
-        d.text((lx, lab_y - 22), name, font=P.F["label"], fill=T["fg"])
-        nw = P.text_w(d, name, P.F["label"])
-        d.text((lx + nw + 12, lab_y - 16), P.fit(d, fmt_km(km), P.F["small"], x1 - lx - nw - 12),
-               font=P.F["small"], fill=T["dim"])
+        d.line((rail + 10, dot_y, lx - 8, lab_y), fill=T["fg"], width=4)
+        d.text((lx, lab_y - 21), name, font=LABEL, fill=T["fg"])
+        nw = P.text_w(d, name, LABEL)
+        d.text((lx + nw + 12, lab_y - 17), P.fit(d, fmt_km(km), KM, x1 - lx - nw - 12), font=KM, fill=T["dim"])
 
 
 def render(data, t, note=None):
-    global T
     sky = build(data, t)
-    T = NIGHT if sky["sun_el"] < -5 else DAY
     img = P.CANVAS = Image.new("L", (P.W, P.H), T["bg"])
     d = P.CachedDraw(img)
     draw_dome(img, d, sky)
@@ -675,19 +727,17 @@ def render(data, t, note=None):
 
 
 def layout():
-    """The dome on one side, the panel on the other, inside `safe`. Everything on the dome's
-    rim is lettering (compass points, rise times), so it all keeps to TEXT."""
-    global PANEL_X, DOME_X, DOME_Y, DOME_R, SKY_BOX
-    x0, y0, x1, y1 = P.TEXT
-    PANEL_X = x1 - (P.PANEL_W_CFG or PANEL_W)
-    SKY_BOX = (x0, y0, PANEL_X - 40, y1)
-    # Room outside the horizon for the compass letters, which now sit on the ground
-    DOME_R = int(min(SKY_BOX[2] - x0, y1 - y0) / 2 - 30)
-    DOME_X = (x0 + SKY_BOX[2]) // 2
-    DOME_Y = (y0 + y1) // 2
-
-
-PANEL_W = 450
+    """The panel where the planes frame's style puts its story (`bold-right`: on the left),
+    the dome in the map's place. Everything on the dome's rim is lettering (compass points,
+    rise times), so the dome keeps to TEXT."""
+    global PANEL_X, PANEL_R, DOME_X, DOME_Y, DOME_R, SKY_BOX
+    PANEL_X, PANEL_R = P.PANEL_X, P.PANEL_R
+    m, t = P.MAP_BOX, P.TEXT
+    SKY_BOX = (max(m[0], t[0]), t[1], min(m[2], t[2]), t[3])
+    # Room outside the horizon for the compass letters, which sit on the ground
+    DOME_R = int(min(SKY_BOX[2] - SKY_BOX[0], SKY_BOX[3] - SKY_BOX[1]) / 2 - 44)
+    DOME_X = (SKY_BOX[0] + SKY_BOX[2]) // 2
+    DOME_Y = (SKY_BOX[1] + SKY_BOX[3]) // 2
 
 
 # ---------- live data ----------
@@ -701,7 +751,6 @@ ORBITS_RETRY_S = 3 * 3600     # after a failed download, keep the old orbits (go
 # Radiosondes go up at 00 and 12 UTC everywhere (11:00 and 23:00 by the clock at Buffalo);
 # a flight is up about two hours, then falls
 BALLOON_WINDOWS = ((10.75, 14.0), (22.75, 26.0))
-QUIET_FETCH_S = 900
 
 
 def fetch_orbits(session, now):
@@ -769,13 +818,24 @@ def fetch_balloon(session, now, balloon):
     return balloon
 
 
+def next_balloon_window(now):
+    """Epoch when the next balloon window opens."""
+    day = now - now % 86400
+    starts = [day + k * 86400 + a * 3600 for k in (0, 1) for a, _ in BALLOON_WINDOWS]
+    return min(t for t in starts if t > now)
+
+
 class Frame:
-    """The sky frame for loop.run. At night (config "night") it fetches nothing and
-    redraws at each half-hourly wake: everything but the planes is computed on the device."""
+    """The sky frame for loop.run. Wi-Fi goes on only when something is due: orbits once a
+    day, and the balloon every 5 minutes around its launches. The rest is computed here, so
+    in between it just redraws, every 10 minutes, or every minute while something crosses.
+    At night (config "night") it fetches nothing and redraws at each half-hourly wake."""
+
+    idle_redraw_s = 600
 
     def __init__(self, args):
         self.args, self.log, self.fetch_log = args, {}, {}
-        self.raw, self.sky = [], {}
+        self.sky = {}
         try:
             with open(ORBITS_PATH) as f:
                 self.orbits = f.read()
@@ -794,37 +854,42 @@ class Frame:
         layout()
         return cfg
 
+    def orbits_due(self):
+        return max(self.orbits_at + ORBITS_MAX_AGE, self.orbits_tried + ORBITS_RETRY_S)
+
     def fetch(self, session, now):
-        """Planes every time; orbits when a day old; the balloon only around launches.
-        The extras never fail the fetch: the planes are what the loop's backoff is for."""
+        """Orbits when a day old, the balloon around launches. A dead link raises, so the
+        loop backs off and recovers Wi-Fi; a bad answer from a server waits for next time."""
         self.fetch_log = {}
-        if now - self.orbits_at > ORBITS_MAX_AGE and now - self.orbits_tried > ORBITS_RETRY_S:
-            self.orbits_tried = now
+        if now >= self.orbits_due():
             try:
                 self.orbits, self.orbits_at = fetch_orbits(session, now), now
                 self.fetch_log["orbits"] = 1
+            except (requests.ConnectionError, requests.Timeout):
+                raise
             except (requests.RequestException, ValueError, KeyError) as e:
+                self.orbits_tried = now
                 print("orbits fetch failed: %r" % e, flush=True)
         if in_balloon_window(now) or self.balloon:
             try:
                 self.balloon = fetch_balloon(session, now, self.balloon)
                 P.write_json(BALLOON_PATH, self.balloon)
                 self.fetch_log["balloon"] = int(bool(self.balloon))
+            except (requests.ConnectionError, requests.Timeout):
+                raise
             except (requests.RequestException, ValueError, KeyError) as e:
                 print("balloon fetch failed: %r" % e, flush=True)
-        self.raw = P.fetch_aircraft(session)
-        self.fetch_log["planes"] = len(self.raw)
         if self.args.save_sample:
             with open(self.args.save_sample, "w") as f:
                 json.dump(self.data(now), f)
 
     def data(self, now):
-        return {"time": now, "planes": P.project(self.raw, now), "orbits": self.orbits, "balloon": self.balloon}
+        return {"time": now, "orbits": self.orbits, "balloon": self.balloon}
 
     def fetch_every(self, now):
         if self.balloon or in_balloon_window(now):
             return P.FETCH_BUSY_S
-        return P.FETCH_S if P.project(self.raw, now) else QUIET_FETCH_S
+        return max(60, min(self.orbits_due(), next_balloon_window(now)) - now)
 
     def render(self, now, fetched_at, note=None):
         img, self.sky = render(self.data(now), now, note)
@@ -832,9 +897,8 @@ class Frame:
         return img
 
     def moving(self, now):
-        """Minute redraws while planes are up, a pass or train is on, or a balloon flies;
-        otherwise the stars' drift is fine at the fetch's pace."""
-        if P.project(self.raw, now) or self.balloon:
+        """Minute redraws while a pass or train is on or a balloon flies."""
+        if self.balloon:
             return True
         ps, tr = self.sky.get("pass"), self.sky.get("train")
         return bool((ps and ps["rise"] - 1800 <= now <= ps["set"]) or (tr and tr["start"] - 900 <= now <= tr["end"]))
@@ -856,7 +920,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true", help="render one frame and exit")
     ap.add_argument("--out", help="write PNG here instead of pushing to the screen")
-    ap.add_argument("--sample", help="render from a saved {time, planes, orbits or tle, balloon} JSON instead of the network")
+    ap.add_argument("--sample", help="render from a saved {time, orbits or tle, balloon} JSON instead of the network")
     ap.add_argument("--save-sample", help="also write the fetched data to this JSON (for design testing)")
     ap.add_argument("--time", type=float, help="with --sample: unix time to render instead of the sample's")
     ap.add_argument("--heading", type=float, help="compass direction the viewer faces (0-359)")

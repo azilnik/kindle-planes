@@ -17,6 +17,8 @@ A frame is an object with:
     night_key(now, mode)     redraw the rest picture whenever this changes
     render_night(now, mode)  that picture; mode is "night", or "low" on a dying battery
 and `fetch_log` and `log`, dicts of fields for the power log's fetch and draw lines.
+Optionally `idle_redraw_s`: the longest a still picture waits for a redraw when the next
+fetch is further off than that (the sky turns even when nothing needs fetching).
 """
 
 import os
@@ -193,6 +195,8 @@ def run(frame, args):
 
         # Draw on the minute so the clock is exact; with nothing to move, just wait for the fetch
         next_draw = (int(time.time() // DRAW_S) + 1) * DRAW_S if frame.moving(drawn) else next_fetch
+        if getattr(frame, "idle_redraw_s", None):
+            next_draw = min(next_draw, drawn + frame.idle_redraw_s)
         # Never deep-sleep in the first minute after start, so a bad build can be stopped over SSH
         suspend = pw.get("suspend", False) and time.time() - started > 60 and not (charging and cfg["frontlight"])
         woke = power.sleep_until(min(next_draw, next_fetch), suspend=suspend)
