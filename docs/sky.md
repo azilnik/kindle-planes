@@ -38,8 +38,9 @@ off it is, and the bigger it is, the earlier it starts to count: a sunrise matte
 last half hour, a great ISS pass takes the afternoon before, a big meteor shower the day
 before. There's no rotation and no randomness: the same sky always gives the same screen.
 
-The last line, *Next*, is the most wonderful thing in the coming week, so there's always
-something to look forward to.
+The last line, *Next*, is the most wonderful thing coming up, and how soon: *ISS pass
+tonight 8:49*, *Full moon in 4 days*. It looks a week ahead, and a month ahead for what
+comes once a year or less, like the meteor showers: *Orionids in 20 days*.
 
 The frame never complains. Shorter days are told as the time the stars come out, and a
 meteor shower washed out by the Moon steps back instead of saying so.

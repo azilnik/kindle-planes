@@ -703,8 +703,8 @@ def along(start, end, t):
 # in the moment while a great ISS pass takes the afternoon and a big meteor shower the day
 # before. Below the headline, "Next" names the most wonderful thing in the coming week.
 LEAD_H = {1: 0.5, 2: 2, 3: 6, 4: 24, 5: 24 * 7}
-NEXT_DAYS = 7          # for everything; the big things are worth promising a month out
-NEXT_BIG_DAYS = 30
+NEXT_DAYS = 7          # for everything; past a week only for what comes once a year or less,
+YEARLY_DAYS = 30       # and not so far off that it says the same thing all season
 # Peak nights of the showers worth a look, with their usual rates an hour under a dark sky
 SHOWERS = (("Quadrantids", 1, 3, 80), ("Lyrids", 4, 22, 18), ("Eta Aquariids", 5, 5, 50),
            ("Perseids", 8, 12, 100), ("Orionids", 10, 21, 20), ("Leonids", 11, 17, 15), ("Geminids", 12, 13, 150))
@@ -717,6 +717,17 @@ def score(ev, t):
         return float(ev["wonder"])
     lead = LEAD_H[ev["wonder"]]
     return ev["wonder"] * lead / (lead + (ev["start"] - t) / 3600.0)
+
+
+def how_soon(at, now, timed):
+    """For the Next line: tonight 8:49, tomorrow night, in 25 days."""
+    lt = time.localtime(at)
+    days = round((time.mktime(lt[:3] + (12, 0, 0, 0, 0, -1)) -
+                  time.mktime(time.localtime(now)[:3] + (12, 0, 0, 0, 0, -1))) / 86400)
+    if days >= 2:
+        return "in %d days" % days
+    word = night_word(at, now) if lt.tm_hour >= 18 or lt.tm_hour < 6 else ("today" if days == 0 else "tomorrow")
+    return word + (" " + clock(at) if timed else "")
 
 
 def night_word(t, now):
@@ -743,7 +754,7 @@ def pass_event(name, ps, t):
                 stats=[(clock(ps["peak"]), day_word(ps["peak"], t)), ("%d°" % ps["peak_el"], "UP")],
                 path=(P.compass(ps["rise_az"]), P.compass(ps["set_az"]), along(ps["rise"], ps["set"], t)),
                 foot=countdown(ps["rise"], ps["set"], t),
-                next="%s %s %s %s" % (name, up, night_word(ps["peak"], t), clock(ps["peak"])))
+                next=("%s %s" % (name, up), ps["peak"], True))
 
 
 def shower_events(t, lat, lon):
@@ -766,7 +777,7 @@ def shower_events(t, lat, lon):
                             start=start, end=start + 7 * 3600, head=name,
                             stats=[("%d" % rate, "AN HOUR")] + ([moon_stat] if moon_stat else []),
                             foot="Best after midnight" if t >= start else night_word(start, t).capitalize(),
-                            next="%s %s" % (name, night_word(start, t))))
+                            next=(name, start, False), yearly=True))
     return out
 
 
@@ -791,7 +802,7 @@ def events(sky):
         evs.append(dict(kind="train", wonder=4, start=tr["start"], end=tr["end"], head="Starlink train",
                         stats=[("%d" % tr["n"], "IN A LINE"), (clock(tr["start"]), day_word(tr["start"], t))],
                         path=(P.compass(tr["rise_az"]), P.compass(tr["set_az"]), along(tr["start"], tr["end"], t)),
-                        foot=countdown(tr["start"], tr["end"], t), next="Starlink train " + night_word(tr["start"], t)))
+                        foot=countdown(tr["start"], tr["end"], t), next=("Starlink train", tr["start"], True)))
     for name, station_pass in sky.get("passes", []):
         ev = pass_event(name, station_pass, t)
         if ev:
@@ -837,11 +848,11 @@ def events(sky):
             evs.append(dict(kind="moon", wonder=3 if full else 2, start=moon["rises"], end=moon["rises"] + 6 * 3600,
                             head=phase, stats=[(clock(moon["rises"]), day_word(moon["rises"], t)),
                                                ("%d%%" % round(moon["frac"] * 100), "LIT")],
-                            foot="Rises in the " + P.compass(az), next="%s rises %s %s" % (phase, night_word(moon["rises"], t), clock(moon["rises"]))))
+                            foot="Rises in the " + P.compass(az), next=("Moon rises", moon["rises"], True)))
     fm = kept("fullmoon", t, None, 6 * 3600, lambda: next_full_moon(t + 86400), ends=lambda when: when)
     if fm and fm > t + 86400:
         evs.append(dict(kind="moon", wonder=3, start=fm, end=fm + 6 * 3600, head="Full moon", stats=[],
-                        next="Full moon " + night_word(fm, t)))
+                        next=("Full moon", fm, False)))
     evs += kept("showers", t, time.localtime(t).tm_year, 86400, lambda: shower_events(t, lat, lon))
     return evs
 
@@ -856,9 +867,10 @@ def hero(sky):
     if not best or score(best, t) <= 0:
         best = dict(kind=None, head="Clear above", stats=[])
     ahead = [ev for ev in evs if ev is not best and ev.get("next") and t < ev["start"]
-             and ev["start"] < t + (NEXT_BIG_DAYS if ev["wonder"] >= 3 else NEXT_DAYS) * 86400
+             and ev["start"] < t + (YEARLY_DAYS if ev.get("yearly") else NEXT_DAYS) * 86400
              and not (ev["kind"] == best["kind"] and ev["start"] == best["start"])]
-    best["next"] = min(ahead, key=lambda ev: (-ev["wonder"], ev["start"]))["next"] if ahead else None
+    nxt = min(ahead, key=lambda ev: (-ev["wonder"], ev["start"]))["next"] if ahead else None
+    best["next"] = "%s %s" % (nxt[0], how_soon(nxt[1], t, nxt[2])) if nxt else None
     return best
 
 
