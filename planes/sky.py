@@ -171,14 +171,18 @@ def build(data, t):
         "fleet": [s for n, s in astro.read_orbits(orbits) if n.startswith("STARLINK")]})
     for name, sat in sats["stations"]:
         look = astro.sat_look(sat, t, lat, lon)
-        if look and look[0] >= 10:
+        # Only when you could see it: sunlit, against a sky dark enough
+        if look and look[0] >= 10 and look[4] and sky["sun_el"] < -6:
             add(dict(kind="station", name="ISS" if name.startswith("ISS") else "Tiangong",
                      el=look[0], az=look[1], km=look[2], lit=look[4]))
     # Pass searches are the costly part: redo them every half hour or once a pass is over
     sky["passes"] = []
     for name, sat in sats["stations"]:
         short = "ISS" if name.startswith("ISS") else "Tiangong"
-        ps = kept(("pass", short), t, orbits, 1800, lambda sat=sat: astro.next_visible_pass(sat, t, lat, lon),
+        # Three days ahead, so a week without evening passes still has one to promise. The
+        # answer only changes with new orbits, so it's kept until the pass is over
+        ps = kept(("pass", short), t, orbits, 6 * 3600,
+                  lambda sat=sat: astro.next_visible_pass(sat, t, lat, lon, span=3 * 86400),
                   ends=lambda ps: ps["set"])
         if ps:
             sky["passes"].append((short, ps))
@@ -655,7 +659,8 @@ def along(start, end, t):
 # in the moment while a great ISS pass takes the afternoon and a big meteor shower the day
 # before. Below the headline, "Next" names the most wonderful thing in the coming week.
 LEAD_H = {1: 0.5, 2: 2, 3: 6, 4: 24, 5: 24 * 7}
-NEXT_DAYS = 7
+NEXT_DAYS = 7          # for everything; the big things are worth promising a month out
+NEXT_BIG_DAYS = 30
 # Peak nights of the showers worth a look, with their usual rates an hour under a dark sky
 SHOWERS = (("Quadrantids", 1, 3, 80), ("Lyrids", 4, 22, 18), ("Eta Aquariids", 5, 5, 50),
            ("Perseids", 8, 12, 100), ("Orionids", 10, 21, 20), ("Leonids", 11, 17, 15), ("Geminids", 12, 13, 150))
@@ -672,6 +677,8 @@ def score(ev, t):
 
 def night_word(t, now):
     """Tonight, tomorrow night, Sat night: for things that belong to a night."""
+    if t - now > 6 * 86400:
+        return time.strftime("%b %-d", time.localtime(t))
     d = day_word(t, now)
     return {"TONIGHT": "tonight", "TOMORROW PM": "tomorrow night", "TOMORROW AM": "tomorrow night"}.get(
         d, time.strftime("%a", time.localtime(t)) + " night")
@@ -786,10 +793,10 @@ def events(sky):
                             head=phase, stats=[(clock(moon["rises"]), day_word(moon["rises"], t)),
                                                ("%d%%" % round(moon["frac"] * 100), "LIT")],
                             foot="Rises in the " + P.compass(az), next="%s rises %s %s" % (phase, night_word(moon["rises"], t), clock(moon["rises"]))))
-    fm = kept("fullmoon", t, None, 6 * 3600, lambda: next_full_moon(t), ends=lambda when: when)
+    fm = kept("fullmoon", t, None, 6 * 3600, lambda: next_full_moon(t + 86400), ends=lambda when: when)
     if fm and fm > t + 86400:
         evs.append(dict(kind="moon", wonder=3, start=fm, end=fm + 6 * 3600, head="Full moon", stats=[],
-                        next="Full moon " + time.strftime("%a %b %-d", time.localtime(fm))))
+                        next="Full moon " + night_word(fm, t)))
     evs += kept("showers", t, time.localtime(t).tm_year, 86400, lambda: shower_events(t, lat, lon))
     return evs
 
@@ -803,7 +810,8 @@ def hero(sky):
     best = max(evs, key=lambda ev: (score(ev, t), rank.get(ev["kind"], 0), -ev["start"])) if evs else None
     if not best or score(best, t) <= 0:
         best = dict(kind=None, head="Clear above", stats=[])
-    ahead = [ev for ev in evs if ev is not best and ev.get("next") and t < ev["start"] < t + NEXT_DAYS * 86400
+    ahead = [ev for ev in evs if ev is not best and ev.get("next") and t < ev["start"]
+             and ev["start"] < t + (NEXT_BIG_DAYS if ev["wonder"] >= 3 else NEXT_DAYS) * 86400
              and not (ev["kind"] == best["kind"] and ev["start"] == best["start"])]
     best["next"] = min(ahead, key=lambda ev: (-ev["wonder"], ev["start"]))["next"] if ahead else None
     return best
