@@ -92,6 +92,14 @@ backoff, suspend, the frontlight, the power button, night and low-battery rest. 
 layout and helpers from `planes.py` (`import planes as P`), so `load_config` and
 `apply_layout` serve both.
 
+The sky frame's headline is chosen by `hero()` in `sky.py`: events with a wonder score,
+explained in `docs/sky.md`. Add a new kind of thing as an event there, never as a special
+case. It never shows bad news: say what to look forward to instead.
+
+Design it on the panel, through the webcam (`tools/camshot.sh`) as well as `fbshot.sh`:
+e-ink black is a dark gray, so grays below about 150 vanish, and anything under 34 px is
+unreadable from across a room.
+
 The sky frame's pure-Python work (sgp4 pass searches, rise and set times, the star field)
 is cached between frames by `kept()`; the first frame after a start costs the most.
 `planes/vendor/sgp4` is upstream sgp4 2.27 (its pure-Python modules and `omm.py`),
