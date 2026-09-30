@@ -870,6 +870,9 @@ def main():
     P.load_config(args)
     layout()
 
+    if args.out:
+        os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+
     if args.sample:
         with open(args.sample) as f:
             data = json.load(f)
