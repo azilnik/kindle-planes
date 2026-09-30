@@ -470,7 +470,7 @@ def draw_dome(img, d, sky):
     # The way you face, as a soft cone from the middle toward the top, the way a map shows
     # it. Drawn first, so everything in the sky sits on top of it
     cone = DOME_R * 0.34
-    d.pieslice((DOME_X - cone, DOME_Y - cone, DOME_X + cone, DOME_Y + cone), 242, 298, fill=FRAME - 51)
+    d.pieslice((DOME_X - cone, DOME_Y - cone, DOME_X + cone, DOME_Y + cone), 242, 298, fill=FRAME - 68)
 
     things = sky["things"]
     del TAKEN[:]
