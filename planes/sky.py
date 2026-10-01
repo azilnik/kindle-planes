@@ -118,8 +118,8 @@ def build(data, t):
     sky = {"t": t, "sun_el": astro.sun_alt(t, lat, lon), "things": []}
     add = sky["things"].append
 
-    # Nothing old shown as live: a weather balloon unheard for 20 minutes has landed, a pico
-    # unheard for 2 hours has drifted off. Nor anything under the horizon: it can't be seen
+    # Nothing old shown as live: a weather balloon that's down (fresh_balloon), a pico unheard
+    # for 2 hours has drifted off. Nor anything under the horizon: it can't be seen
     b = data.get("balloon") if fresh_balloon(data.get("balloon"), t) else None
     if b:
         _, lat_b, lon_b, alt_m = b["track"][-1]
@@ -1386,8 +1386,13 @@ def answer_rows(r):
 
 
 def fresh_balloon(b, now):
-    """A weather balloon heard in the last 20 minutes; an older one has landed or gone."""
-    return bool(b and b.get("track") and now - b["track"][-1][0] < 1200)
+    """A weather balloon heard in the last 20 minutes and still in the air. An older one has
+    landed or gone, and so has one that burst and is under a kilometer: a sonde keeps
+    transmitting on the ground, and receivers near where it came down keep hearing it."""
+    if not (b and b.get("track") and now - b["track"][-1][0] < 1200):
+        return False
+    alt = b["track"][-1][3]
+    return not (alt < 1000 and b.get("burst_alt", 0) > alt + 1000)
 
 
 def fetch_amateur(session, now):
