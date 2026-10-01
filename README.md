@@ -9,8 +9,6 @@ home, and shows where it's flying from and to, how high and fast it's going, and
 along its trip it is. The screen updates every minute and a charge lasts about five days.
 At night it draws the whole day's traffic as one picture.
 
-<img alt="The frame showing Hong Kong to Toronto at 4,100 feet, the plane right over the city" src="docs/images/frame-overhead.jpg" width="270"> <img alt="The frame showing Hong Kong to Toronto at 900 feet, the trip marked Landing" src="docs/images/frame-landing.jpg" width="270"> <img alt="The frame showing Frankfurt am Main to Sault Ste. Marie at 41,000 feet, 8 hours 29 minutes flown" src="docs/images/frame-frankfurt.jpg" width="270">
-
 Everything runs on the Kindle. Your computer is only needed to install it.
 
 ## What you need
