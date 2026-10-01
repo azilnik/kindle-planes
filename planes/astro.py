@@ -195,7 +195,8 @@ def _sun_dir(minute):
 def next_pass(sat, t, lat, lon, horizon=10, span=6 * 3600, step=20):
     """The current or next pass above `horizon` degrees: dict of rise/peak/set times,
     azimuths, peak elevation, and the sky track as (t, el, az) samples. None if none in span.
-    Coarse steps: the Kindle runs this in pure Python, so it's done once per wake, not per frame."""
+    Coarse steps: the Kindle runs this in pure Python, and the sky frame keeps the answer
+    (kept()) rather than searching again each frame."""
     track, start = [], t
     # Back up to catch a pass that's already underway
     while True:

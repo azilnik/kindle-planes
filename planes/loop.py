@@ -19,7 +19,10 @@ A frame is an object with:
 and `fetch_log` and `log`, dicts of fields for the power log's fetch and draw lines.
 Optionally `idle_redraw_s`: the longest a still picture waits for a redraw when the next
 fetch is further off than that (the sky turns even when nothing needs fetching). The loop
-sets `plugged` on the frame each round, so it can fetch faster on a charger.
+sets `plugged` on the frame each round, so it can fetch faster on a charger. Optionally
+`next_due(now)`: when its next fetch falls due, so the morning after the quiet hours
+waits for it rather than joining Wi-Fi with nothing to fetch (the sky frame computes
+most of what it shows; planes always has something to fetch by morning).
 
 Plugged in, battery doesn't matter: Wi-Fi stays up (SSH works without the power button),
 the Kindle never suspends, and the picture redraws every minute. Anything on a shared rate
@@ -169,7 +172,8 @@ def run(frame, args):
             until = now + NIGHT_WAKE_S if low else min(now + NIGHT_WAKE_S, frame.next_morning(now))
             woke = power.sleep_until(min(until, now + 60) if plugged else until, suspend=suspend)
             power.log("wake", how=woke, night=1)
-            next_fetch = 0  # fetch straight away when morning comes
+            # Fetch straight away when morning comes, if there's anything to fetch
+            next_fetch = frame.next_due(now) if hasattr(frame, "next_due") else 0
             last_full = 0
             continue
 

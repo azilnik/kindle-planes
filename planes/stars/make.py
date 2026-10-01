@@ -1,4 +1,4 @@
-"""Build stars.json (bright stars, constellation lines, star names) from d3-celestial's data (BSD-3,
+"""Build stars.json (the bright stars and their names) from d3-celestial's data (BSD-3,
 LICENSE beside this).
 Run on the Mac: python3 planes/stars/make.py. The Kindle only ever reads the output."""
 import json
@@ -7,7 +7,7 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = "https://cdn.jsdelivr.net/npm/d3-celestial@0.7.35/data/"
-MAG_LIMIT = 4.5      # about what a Toronto suburb shows on a clear night
+MAG_LIMIT = 2.5      # the faintest the sky frame draws (sky.mag_limit): the shapes people know
 NAME_LIMIT = 1.0     # only the stars people know by name get one
 ALSO_NAMED = {"Polaris"}
 
@@ -23,7 +23,6 @@ def ra_dec(c):
 
 stars = get("stars.6.json")["features"]
 names = get("starnames.json")
-lines = get("constellations.lines.json")["features"]
 
 out = {
     "stars": [ra_dec(f["geometry"]["coordinates"]) + [f["properties"]["mag"]]
@@ -31,7 +30,6 @@ out = {
     "names": [ra_dec(f["geometry"]["coordinates"]) + [names[str(f["id"])]["name"]]
               for f in stars if names.get(str(f["id"]), {}).get("name")
               and (f["properties"]["mag"] <= NAME_LIMIT or names[str(f["id"])]["name"] in ALSO_NAMED)],
-    "lines": [[ra_dec(c) for c in seg] for f in lines for seg in f["geometry"]["coordinates"]],
 }
 with open(os.path.join(HERE, "stars.json"), "w") as f:
     json.dump(out, f, separators=(",", ":"))

@@ -441,6 +441,8 @@ class CachedDraw(ImageDraw.ImageDraw):
             return super().textbbox(xy, text, font, *args, **kw)
         key = (text, id(font))
         if key not in _bbox:
+            if len(_bbox) > 4000:
+                _bbox.clear()  # a clock's every minute is a new string: never let it grow for weeks
             _bbox[key] = super().textbbox((0, 0), text, font)
         b = _bbox[key]
         return (b[0] + xy[0], b[1] + xy[1], b[2] + xy[0], b[3] + xy[1])

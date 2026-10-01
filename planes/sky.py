@@ -64,7 +64,7 @@ BELOW = 30
 # Always a dark page, day and night, and light is importance: each step up the panel's 16
 # grays pulls the eye harder. The one thing worth looking up for is white; everything else
 # in the sky a step down; the text that supports it below that; structure (the horizon,
-# rails, constellation lines) recedes, thick but dimmer. E-ink's black is a dark gray, so
+# rails, paths) recedes, thick but dimmer. E-ink's black is a dark gray, so
 # the bottom half of the range sinks into it: every level sits in the top half. Multiples
 # of 17 are the panel's own levels, so none of them get rounded.
 HERO, THING, SOFT, FRAME, GROUND = 255, 238, 204, 153, 0
@@ -134,7 +134,7 @@ def build(data, t):
         el, az, rng = seen_from_home(pico["lat"], pico["lon"], pico["alt"] / 1000)
         if el > 0:
             add(dict(kind="pico", name="Pico balloon", el=el, az=az, km=rng,
-                     alt_km=pico["alt"] / 1000, call=pico["call"], days=pico.get("days")))
+                     alt_km=pico["alt"] / 1000, days=pico.get("days")))
 
     def moon_el(tt):
         return astro.moon_alt_az(tt, lat, lon)[0]
@@ -908,7 +908,6 @@ def shower_events(t, lat, lon):
             out.append(dict(kind="shower", wonder=wonder,
                             start=start, end=start + 7 * 3600, head=name,
                             stats=[("%d" % rate, "AN HOUR")] + ([moon_stat] if moon_stat else []),
-                            foot="Best after midnight" if t >= start else night_word(start, t).capitalize(),
                             next=(name, start, False), yearly=True))
     return out
 
@@ -932,7 +931,7 @@ def events(sky):
     evs = []
     if tr:
         evs.append(dict(kind="train", wonder=4, start=tr["start"], end=tr["end"], head="Starlink train",
-                        stats=[("%d" % tr["n"], "IN A LINE"), when_stat(tr["start"], tr["start"], tr["end"], t)],
+                        stats=[("%d" % tr["n"], "SATELLITES"), when_stat(tr["start"], tr["start"], tr["end"], t)],
                         path=path(tr["rise_az"], tr["set_az"], along(tr["start"], tr["end"], t)),
                         foot=look_when(tr["start"], tr["end"], t, tr["rise_az"]), next=("Starlink train", tr["start"], True)))
     for name, station_pass in sky.get("passes", []):
@@ -943,12 +942,13 @@ def events(sky):
     if pico:
         # A balloon on its own, from a ham radio club or a school: the long ones circle the world
         evs.append(dict(kind="pico", wonder=4 if (pico["days"] or 0) >= 7 else 3, start=t, end=t, head=pico["name"],
-                        stats=[("%.0f" % pico["alt_km"], "KM UP"), ("%d°" % pico["el"], height(pico["el"], pico["az"]))],
-                        foot="%s, day %d aloft" % (pico["call"], pico["days"]) if pico["days"] else pico["call"]))
+                        stats=[("%.0f" % pico["alt_km"], "KM HIGH"), ("%d°" % pico["el"], height(pico["el"], pico["az"]))],
+                        foot="Day %d aloft" % pico["days"] if pico["days"] else
+                        "Launched today" if pico["days"] == 0 else None))
     b = next((th for th in things if th["kind"] == "balloon"), None)
     if b:
         evs.append(dict(kind="balloon", wonder=3, start=t, end=t, head="Weather balloon",
-                        stats=[("%.0f" % b["alt_km"], "KM UP"), ("%d°" % b["el"], height(b["el"], b["az"]))],
+                        stats=[("%.0f" % b["alt_km"], "KM HIGH"), ("%d°" % b["el"], height(b["el"], b["az"]))],
                         foot=("Climbing" if b["rising"] else "Falling") + ", from " + launch_site(b["track"][0])))
     day = sky.get("day")
     sun = next((th for th in things if th["kind"] == "sun"), None)
@@ -1005,7 +1005,9 @@ def events(sky):
     if fm and fm > t + 86400:
         evs.append(dict(kind="moon", wonder=3, start=fm, end=fm + 6 * 3600, head="Full moon", stats=[],
                         next=("Full moon", fm, False), next_only=True))
-    evs += kept("showers", t, time.localtime(t).tm_year, 86400, lambda: shower_events(t, lat, lon))
+    # Kept for the day; the foot is worked out now, so it never says tomorrow night on the night
+    evs += [dict(ev, foot="Best after midnight" if t >= ev["start"] else night_word(ev["start"], t).capitalize())
+            for ev in kept("showers", t, time.localtime(t).tm_year, 86400, lambda: shower_events(t, lat, lon))]
     return evs
 
 
@@ -1288,8 +1290,8 @@ ORBITS_PATH = os.path.join(HERE, "orbits.csv")
 BALLOON_PATH = os.path.join(HERE, "balloon.json")
 ORBITS_MAX_AGE = 20 * 3600    # CelesTrak asks for no more than one download every 2 hours
 ORBITS_RETRY_S = 3 * 3600     # after a failed download, keep the old orbits (good for days)
-# Radiosondes go up at 00 and 12 UTC everywhere (11:00 and 23:00 by the clock at Buffalo);
-# a flight is up about two hours, then falls
+# Radiosondes go up an hour before 00 and 12 UTC everywhere (7 am and 7 pm at Buffalo in
+# summer, 6 in winter); a flight is up about two hours, then falls. In UTC hours
 BALLOON_WINDOWS = ((10.75, 14.0), (22.75, 26.0))
 # Outside the windows, one look every 3 hours: research flights go up off the schedule, and
 # pico balloons drift through at any hour. Every 30 minutes while a pico is in our sky
@@ -1408,7 +1410,7 @@ def fetch_amateur(session, now):
             if now - when > 7200 or alt < 3000:
                 continue
             near.append((P.distance_bearing(P.HOME_LAT, P.HOME_LON, lat, lon)[0], dict(
-                call=str(f.get("payload_callsign") or "?"), lat=round(lat, 4), lon=round(lon, 4),
+                lat=round(lat, 4), lon=round(lon, 4),
                 alt=round(alt), when=when, days=int(float(f["days_aloft"])) if f.get("days_aloft") else None)))
         except (KeyError, TypeError, ValueError):
             continue
@@ -1433,9 +1435,10 @@ def next_balloon_window(now):
 
 class Frame:
     """The sky frame for loop.run. Wi-Fi goes on only when something is due: orbits once a
-    day, and the balloon every 5 minutes around its launches. The rest is computed here, so
-    in between it just redraws, every 10 minutes, or every minute while something crosses.
-    At night (config "night") it fetches nothing and redraws at each half-hourly wake."""
+    day, balloons around their launches (every 15 minutes until one is up, then every 5)
+    and every 3 hours otherwise. The rest is computed here, so in between it just redraws,
+    every 10 minutes, or every minute while something crosses. At night (config "night")
+    it fetches nothing and redraws at each half-hourly wake."""
 
     idle_redraw_s = 600
 
@@ -1510,8 +1513,11 @@ class Frame:
             return self.sondes_at + WINDOW_CHECK_S
         return min(next_balloon_window(now), self.sondes_at + (PICO_CHECK_S if self.amateur else SONDE_CHECK_S))
 
+    def next_due(self, now):
+        return min(self.orbits_due(), self.balloons_due(now))
+
     def fetch_every(self, now):
-        return max(60, min(self.orbits_due(), self.balloons_due(now)) - now)
+        return max(60, self.next_due(now) - now)
 
     def render(self, now, fetched_at, note=None):
         img, self.sky = render(self.data(now), now, note)
