@@ -847,7 +847,8 @@ def events(sky):
         evs.append(dict(kind="sun", wonder=2, start=day["rise"], end=day["set"], head="Sunset " + clock(day["set"]),
                         stats=[(hm(day["length"]), "OF DAYLIGHT"),
                                ("%d°" % (sun["el"] if sun else 0), "UP IN THE " + P.compass(sun["az"] if sun else 180))],
-                        path=(clock(day["rise"]), clock(day["set"]), along(day["rise"], day["set"], t)), icon="sun",
+                        path=(P.compass(day["rise_az"]), P.compass(day["set_az"]), along(day["rise"], day["set"], t)),
+                        icon="sun",
                         foot="Longest day of the year" if abs(diff) < 15 and day["length"] > 12 * 3600 else
                         ("Gaining %s a day" % ms(diff) if diff > 0 else
                          ("Stars out by " + clock(day["dark"]) if day.get("dark") else None))))
@@ -859,9 +860,10 @@ def events(sky):
         full = moon["frac"] > 0.97
         phase = moon_phase(moon["frac"], moon["waxing"])
         if not moon.get("below") and sky["sun_el"] < 0:
+            # A full or new moon says how lit it is in its name; the percent is for the others
+            lit = [] if phase in ("Full moon", "New moon") else [("%d%%" % round(moon["frac"] * 100), "LIT")]
             evs.append(dict(kind="moon", wonder=3 if full else 2, start=t, end=moon.get("sets") or t + 3600, head=phase,
-                            stats=[("%d°" % moon["el"], "UP IN THE " + P.compass(moon["az"])),
-                                   ("%d%%" % round(moon["frac"] * 100), "LIT")],
+                            stats=[("%d°" % moon["el"], "UP IN THE " + P.compass(moon["az"]))] + lit,
                             foot="Sets %s" % when_clock(moon["sets"], t) if moon.get("sets") else None))
         elif moon.get("rises") and astro.sun_alt(moon["rises"], lat, lon) < 0:
             # Rising later tonight: a headline in advance, once it's the best thing coming
