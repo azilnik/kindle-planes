@@ -18,7 +18,12 @@ A frame is an object with:
     render_night(now, mode)  that picture; mode is "night", or "low" on a dying battery
 and `fetch_log` and `log`, dicts of fields for the power log's fetch and draw lines.
 Optionally `idle_redraw_s`: the longest a still picture waits for a redraw when the next
-fetch is further off than that (the sky turns even when nothing needs fetching).
+fetch is further off than that (the sky turns even when nothing needs fetching). The loop
+sets `plugged` on the frame each round, so it can fetch faster on a charger.
+
+Plugged in, battery doesn't matter: Wi-Fi stays up (SSH works without the power button),
+the Kindle never suspends, and the picture redraws every minute. Anything on a shared rate
+limit keeps its pace; that's up to the frame's fetch_every.
 """
 
 import os
@@ -109,11 +114,20 @@ def run(frame, args):
     fetched_at = next_fetch = last_full = 0.0
     failures = 0
     last_style = cfg["style"]
+    was_plugged = False
     while True:
         cfg = frame.configure(args)
         pw = cfg["power"]
         restyled, last_style = last_style != cfg["style"], cfg["style"]
         now = time.time()
+        plugged = frame.plugged = power.on_ac()
+        if pw.get("wifi_toggle") and plugged != was_plugged:
+            # Onto a charger: Wi-Fi up and staying up. Off it: back to Wi-Fi only for fetches
+            if plugged:
+                power.wifi_up()
+            else:
+                power.wifi_down()
+        was_plugged = plugged
 
         low = not args.once and battery_low(low)
         if not args.once and (frame.in_night(now) or low):
@@ -128,9 +142,9 @@ def run(frame, args):
                     power.log("night_draw", mode=mode, **frame.log)
                 except Exception:
                     traceback.print_exc()
-            if pw.get("wifi_toggle"):
+            if pw.get("wifi_toggle") and not plugged:
                 power.wifi_down()
-            suspend = pw.get("suspend", False) and time.time() - started > 60
+            suspend = pw.get("suspend", False) and time.time() - started > 60 and not plugged
             woke = power.sleep_until(now + NIGHT_WAKE_S if low else min(now + NIGHT_WAKE_S, frame.next_morning(now)),
                                      suspend=suspend)
             power.log("wake", how=woke, night=1)
@@ -162,7 +176,7 @@ def run(frame, args):
             except (requests.RequestException, ValueError) as e:
                 failures += 1
                 print("fetch failed (%d): %r" % (failures, e), file=sys.stderr, flush=True)
-            if pw.get("wifi_toggle"):
+            if pw.get("wifi_toggle") and not plugged:
                 power.wifi_down()
             if failures:
                 next_fetch = now + min(60 * failures, MAX_BACKOFF_S)
@@ -173,8 +187,7 @@ def run(frame, args):
 
         # Suspend switches the frontlight off, so a steady glow is only possible awake:
         # light it when on a charger (and skip suspend below), keep it dark on battery
-        charging = power.on_ac()
-        power.set_frontlight(cfg["frontlight"] if charging else 0)
+        power.set_frontlight(cfg["frontlight"] if plugged else 0)
         drawn = time.time()
         try:
             img = frame.render(drawn, fetched_at)
@@ -194,11 +207,11 @@ def run(frame, args):
             return
 
         # Draw on the minute so the clock is exact; with nothing to move, just wait for the fetch
-        next_draw = (int(time.time() // DRAW_S) + 1) * DRAW_S if frame.moving(drawn) else next_fetch
+        next_draw = (int(time.time() // DRAW_S) + 1) * DRAW_S if plugged or frame.moving(drawn) else next_fetch
         if getattr(frame, "idle_redraw_s", None):
             next_draw = min(next_draw, drawn + frame.idle_redraw_s)
         # Never deep-sleep in the first minute after start, so a bad build can be stopped over SSH
-        suspend = pw.get("suspend", False) and time.time() - started > 60 and not (charging and cfg["frontlight"])
+        suspend = pw.get("suspend", False) and time.time() - started > 60 and not plugged
         woke = power.sleep_until(min(next_draw, next_fetch), suspend=suspend)
         if woke == "button" and hold_until and time.time() - hold_started > 5:
             # A second press while held means leave: hand the screen back to the Kindle
