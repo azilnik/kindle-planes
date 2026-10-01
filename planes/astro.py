@@ -5,6 +5,7 @@ Keplerian elements for planets): good to a fraction of a degree, which is a few 
 on the dome. Satellites use sgp4, which falls back to pure Python without its C module.
 """
 
+import functools
 import io
 import math
 import os
@@ -145,6 +146,7 @@ def read_orbits(text):
     return [(rows[i].strip(), Satrec.twoline2rv(rows[i + 1], rows[i + 2])) for i in range(0, len(rows) - 2, 3)]
 
 
+@functools.lru_cache(maxsize=4)
 def _observer(lat, lon, h_km=0.17):
     """WGS84 geodetic to Earth-fixed km."""
     f = 1 / 298.257223563
@@ -174,13 +176,20 @@ def sat_look(sat, t, lat, lon):
     up = math.cos(la) * math.cos(lo) * dx + math.cos(la) * math.sin(lo) * dy + math.sin(la) * dz
     rng = math.sqrt(dx * dx + dy * dy + dz * dz)
     # Sunlit unless inside Earth's shadow cylinder
-    sra, sdec, _ = sun(t)
-    s = (math.cos(sdec * D) * math.cos(sra * D), math.cos(sdec * D) * math.sin(sra * D), math.sin(sdec * D))
+    s = _sun_dir(int(t // 60))
     along = r[0] * s[0] + r[1] * s[1] + r[2] * s[2]
     perp = math.sqrt(max(0.0, r[0] ** 2 + r[1] ** 2 + r[2] ** 2 - along * along))
     lit = along > 0 or perp > R_EARTH
     return (math.asin(up / rng) / D, (math.atan2(east, north) / D) % 360, rng,
             math.sqrt(r[0] ** 2 + r[1] ** 2 + r[2] ** 2) - R_EARTH, lit)
+
+
+@functools.lru_cache(maxsize=256)
+def _sun_dir(minute):
+    """Unit vector to the Sun, once a minute: it moves a quarter degree in that time, and
+    working it out was half the cost of each satellite position."""
+    sra, sdec, _ = sun(minute * 60)
+    return (math.cos(sdec * D) * math.cos(sra * D), math.cos(sdec * D) * math.sin(sra * D), math.sin(sdec * D))
 
 
 def next_pass(sat, t, lat, lon, horizon=10, span=6 * 3600, step=20):
@@ -214,6 +223,12 @@ def next_visible_pass(sat, t, lat, lon, span=24 * 3600):
     """The current or next pass you could actually see (sunlit satellite, dark sky)."""
     tt = t
     while tt < t + span:
+        if sun_alt(tt, lat, lon) > -6:
+            # No pass can be seen in daylight: go straight to dusk, less the length of a pass
+            dusk = next((d for d in range(int(tt), int(t + span), 600) if sun_alt(d, lat, lon) < -6), None)
+            if dusk is None:
+                return None
+            tt = max(tt, dusk - 900)
         ps = next_pass(sat, tt, lat, lon, span=t + span - tt, step=30)
         if not ps or ps["visible"]:
             return ps

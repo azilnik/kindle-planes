@@ -29,18 +29,30 @@ time and a wonder from 1 to 5:
 | Wonder | Events |
 |---|---|
 | 4 | An ISS pass 60° up or more, a Starlink train, the Perseids, Geminids and Quadrantids, a pico balloon that's been up a week |
-| 3 | An ISS pass 25° to 60° up, a Tiangong pass 60° up, a weather or pico balloon in the sky, the full moon, the Eta Aquariids |
+| 3 | An ISS pass 25° to 60° up, a Tiangong pass 60° up, a weather or pico balloon in the sky, the full moon, the Eta Aquariids, the midnight sun and polar night |
 | 2 | Lower passes, the Moon up at night, daylight, the smaller showers |
-| 1 | Sunrise |
+| 1 | Sunrise, the Moon low in the haze under 10° |
+
+Ties go to what you can see: a station, then a train or a shower, then the Moon and Sun,
+then a balloon. Anything below the horizon never leads.
 
 Something happening now scores its wonder. Something still to come scores less the further
 off it is, and the bigger it is, the earlier it starts to count: a sunrise matters in the
 last half hour, a great ISS pass takes the afternoon before, a big meteor shower the day
 before. There's no rotation and no randomness: the same sky always gives the same screen.
 
-The last line, *Next*, is the most wonderful thing coming up, and how soon: *ISS pass
-tonight 8:49*, *Full moon in 4 days*. It looks a week ahead, and a month ahead for what
-comes once a year or less, like the meteor showers: *Orionids in 20 days*.
+The last line, *Next*, is the most wonderful thing coming up, and how soon: *ISS 8:49
+tonight*, *Full moon in 4 days*. It looks a week ahead, and a month ahead for what comes
+once a year or less, like the meteor showers: *Orionids in 20 days*. The coming full moon
+only ever shows here: as a headline it would name something the dome can't show.
+
+Times never use a 24-hour clock. A big time has its when in words under it (*TONIGHT*,
+*LATE TONIGHT*, *TOMORROW MORNING*), which also says am or pm; any other time carries a
+small am or pm. A night runs until 6 am, so a pass at 1:30 is *late tonight*.
+
+The distance list beside the dome is its key: everything named on the dome, farthest
+first. It only shows in quiet moments, when the headline is the Sun, the Moon or nothing
+in particular.
 
 The frame never complains. Shorter days are told as the time the stars come out, and a
 meteor shower washed out by the Moon steps back instead of saying so.

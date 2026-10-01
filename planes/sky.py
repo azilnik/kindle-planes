@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""The sky frame: everything above the house. The sky as you'd see it lying on the lawn
-looking up (zenith in the middle, north up, east on the left), with the nearest weather
-balloon, the ISS and fresh Starlink trains, the Moon, planets and stars on it, a
-headline for the one thing worth looking up for, and a ladder of how far away each is.
+"""The sky frame: everything above the house. The sky as a map seen from above, like the
+planes map: straight overhead in the middle, the horizon at the rim, the way you face
+(config "heading") at the top. On it the nearest weather balloon, the ISS, Tiangong and
+fresh Starlink trains, the Moon, planets and the brightest stars; beside it a headline for
+the one thing worth looking up for, and in quiet moments a key of how far away each is.
 
-Data: satellite orbits from CelesTrak once a day, and the balloon from SondeHub around the
-twice-daily launches (Buffalo's, from Toronto). Wi-Fi goes on only for those. The Sun, Moon, planets and
+Data: satellite orbits from CelesTrak once a day, and balloons from SondeHub around the
+twice-daily launches (Buffalo's, from Toronto) and every few hours. Wi-Fi goes on only for those. The Sun, Moon, planets and
 stars are computed on the device, so the sky still draws with no network at all.
 
 Preview:  python planes/sky.py --sample planes/samples/sky/night.json --out out/sky.png
@@ -33,7 +34,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 KM_PER_LY = 9.4607e12
 with open(os.path.join(HERE, "stars", "stars.json")) as _f:
     SKY = json.load(_f)
-# The bold style's type: InterDisplay-Bold for headlines and numbers, Inter-Bold for names
 # IBM Plex Serif for headlines and numbers, Plex Sans for names: technical and bookish at
 # once, and its blunt serifs hold up on e-ink where fine ones break apart
 TF = dict(head="IBMPlexSerif-Bold.ttf", num="IBMPlexSerif-Bold.ttf", name="IBMPlexSans-Bold.ttf",
@@ -118,19 +118,22 @@ def build(data, t):
     sky = {"t": t, "sun_el": astro.sun_alt(t, lat, lon), "things": []}
     add = sky["things"].append
 
-    b = data.get("balloon")
+    # Nothing old shown as live: a weather balloon unheard for 20 minutes has landed, a pico
+    # unheard for 2 hours has drifted off. Nor anything under the horizon: it can't be seen
+    b = data.get("balloon") if fresh_balloon(data.get("balloon"), t) else None
     if b:
         _, lat_b, lon_b, alt_m = b["track"][-1]
         el, az, rng = seen_from_home(lat_b, lon_b, alt_m / 1000)
+    if b and el > 0:
         add(dict(kind="balloon", name="Weather balloon", el=el, az=az, km=rng, alt_km=alt_m / 1000,
                  rising=(b.get("vel_v") or 0) > 0, burst_km=b.get("burst_alt", 0) / 1000,
                  track=b["track"]))
 
     pico = data.get("amateur")
-    if pico:
+    if pico and t - pico.get("when", 0) < 7200:
         el, az, rng = seen_from_home(pico["lat"], pico["lon"], pico["alt"] / 1000)
         if el > 0:
-            add(dict(kind="pico", name="Pico balloon" if pico.get("days") else "Ham balloon", el=el, az=az, km=rng,
+            add(dict(kind="pico", name="Pico balloon", el=el, az=az, km=rng,
                      alt_km=pico["alt"] / 1000, call=pico["call"], days=pico.get("days")))
 
     def moon_el(tt):
@@ -151,9 +154,13 @@ def build(data, t):
                            ends=lambda when: when)
         return th
 
+    # The Moon whenever it's up or rises within the day: a rising Moon is a headline in waiting
     ma, mz, mdist, frac, waxing = astro.moon_alt_az(t, lat, lon)
-    if ma > -BELOW:
-        add(below(dict(kind="moon", name="Moon", el=ma, az=mz, km=mdist, frac=frac, waxing=waxing), moon_el))
+    moon = below(dict(kind="moon", name="Moon", el=ma, az=mz, km=mdist, frac=frac, waxing=waxing), moon_el)
+    if not moon.get("below") or moon.get("rises"):
+        if moon.get("rises"):
+            moon["rise_az"] = astro.moon_alt_az(moon["rises"], lat, lon)[1]
+        add(moon)
     for name in astro.PLANETS:
         if sky["sun_el"] > -5 and name != "Venus":
             continue  # the rest wash out in daylight
@@ -169,9 +176,7 @@ def build(data, t):
     # The space stations, and the newest Starlink launch while it's still a train of
     # lights (the sample carries only that group); every other satellite was clutter
     orbits = data.get("orbits") or data.get("tle", "")
-    sats = kept("sats", t, orbits, 86400, lambda: {
-        "stations": [(n, s) for n, s in astro.read_orbits(orbits) if n.startswith(("ISS", "CSS"))],
-        "fleet": [s for n, s in astro.read_orbits(orbits) if n.startswith("STARLINK")]})
+    sats = kept("sats", t, orbits, 86400, lambda: split_orbits(astro.read_orbits(orbits)))
     for name, sat in sats["stations"]:
         look = astro.sat_look(sat, t, lat, lon)
         # Only when you could see it: sunlit, against a sky dark enough
@@ -190,7 +195,9 @@ def build(data, t):
         if ps:
             sky["passes"].append((short, ps))
     sky["pass"] = next((ps for name, ps in sky["passes"] if name == "ISS"), None)
-    sky["train"] = tr = kept("train", t, orbits, 600, lambda: train_pass(sats["fleet"], t, lat, lon),
+    # A train is only seen against a dark sky: no search in daylight, half the frame's work
+    sky["train"] = tr = kept("train", t, orbits, 600,
+                             lambda: train_pass(sats["fleet"], t, lat, lon) if sky["sun_el"] < -3 else None,
                              ends=lambda tr: tr["end"])
     if tr and tr["start"] - 60 <= t <= tr["end"] and sky["sun_el"] < -6:
         # Only while a train is crossing is it worth placing each satellite
@@ -199,18 +206,27 @@ def build(data, t):
             if look and look[0] >= 10 and look[4]:
                 add(dict(kind="train", name="Starlink", el=look[0], az=look[1], km=look[2]))
 
-    moon = next((th for th in sky["things"] if th["kind"] == "moon" and not th.get("below")), None)
-    if moon:
+    if not moon.get("below"):
         moon["sets"] = kept("moonset", t, None, 3600, lambda: crossing(moon_el, t, rising=False),
                             ends=lambda when: when)
 
-    # The Sun's day: today's, yesterday's length for the change, tomorrow's rise for the night
+    # The Sun's day: today's, yesterday's length for the change, tomorrow's rise for the night.
+    # The days either side by the calendar, at noon: 24 hours off is the wrong day across a
+    # change of clocks
     lt = time.localtime(t)
+
+    def noon(k):
+        return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + k, 12, 0, 0, 0, 0, -1))
     days = kept("days", t, time.strftime("%Y-%m-%d", lt), 86400,
-                lambda: (sun_day(t), sun_day(t - 86400), sun_day(t + 86400)))
+                lambda: (sun_day(t), sun_day(noon(-1)), sun_day(noon(1))))
     sky["day"], sky["yesterday"], sky["tomorrow"] = days
     sky["year"] = kept("year", t, lt.tm_year, 30 * 86400, lambda: year_of_days(lt.tm_year, lat))
     return sky
+
+
+def split_orbits(orbits):
+    return {"stations": [(n, s) for n, s in orbits if n.startswith(("ISS", "CSS"))],
+            "fleet": [s for n, s in orbits if n.startswith("STARLINK")]}
 
 
 def train_pass(fleet, t, lat, lon):
@@ -243,17 +259,20 @@ def sun_day(day_t):
     step = 300
     rise = sets = prev = None
     arc = []
-    for k in range(86400 // step + 1):
+    # The sunset that ends this day's sunrise: far north in summer it comes after midnight,
+    # so the search runs on into the next morning
+    for k in range((86400 + 6 * 3600) // step + 1):
         tt = t0 + k * step
         ra, dec, _ = astro.sun(tt)
         el, az = astro.alt_az(ra, dec, tt, lat, lon)
-        if el > SUN_HORIZON:
-            arc.append((tt, el, az))
         if prev:
-            if prev[1] <= SUN_HORIZON < el and rise is None:
+            if prev[1] <= SUN_HORIZON < el and rise is None and tt <= t0 + 86400:
                 rise = prev[0] + step * (SUN_HORIZON - prev[1]) / (el - prev[1])
-            if prev[1] > SUN_HORIZON >= el:
+            if prev[1] > SUN_HORIZON >= el and rise is not None:
                 sets = prev[0] + step * (prev[1] - SUN_HORIZON) / (prev[1] - el)
+                break
+        if rise is not None and el > SUN_HORIZON:
+            arc.append((tt, el, az))
         prev = (tt, el)
     if not (rise and sets):
         return None
@@ -344,11 +363,16 @@ def draw_stars(img, t, limit):
     img.paste(ImageChops.lighter(img.crop(box), layer), box[:2])
 
 
-def star_names(d, t):
+# Each named star's magnitude, so a name never goes on a star too faint to be drawn yet
+STAR_MAG = {name: min(SKY["stars"], key=lambda s, ra=ra, dec=dec: (s[0] - ra) ** 2 + (s[1] - dec) ** 2)[2]
+            for ra, dec, name in SKY["names"]}
+
+
+def star_names(d, t, limit):
     """The two highest named stars, and only where every other label has left room: they
     go down last."""
-    up = sorted(((astro.alt_az(ra, dec, t, P.HOME_LAT, P.HOME_LON), name) for ra, dec, name in SKY["names"]),
-                reverse=True)
+    up = sorted(((astro.alt_az(ra, dec, t, P.HOME_LAT, P.HOME_LON), name) for ra, dec, name in SKY["names"]
+                 if STAR_MAG[name] <= round(limit * 2) / 2), reverse=True)
     placed = 0
     for (el, az), name in up:
         if el <= 0 or placed == 2:
@@ -366,10 +390,7 @@ def star_names(d, t):
                 break
 
 
-def moon_near(things, x, y):
-    """True when the moon is close enough that a planet's name goes on the moon's label."""
-    return any(math.hypot(*(a - b for a, b in zip(dome_xy(m["el"], m["az"]), (x, y)))) < 100
-               for m in things if m["kind"] == "moon" and not m.get("below"))
+NEAR_MOON = 70  # a planet this close to the Moon shares its label
 
 
 def glow_text(d, xy, s, f, fill, bg):
@@ -392,10 +413,15 @@ def named(name, km, kind):
         NAMED.append((name, km, kind))
 
 
-def side_label(d, x, y, off, s, f, fill, bg, dy=0):
+def overlaps(a, b):
+    return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
+def side_label(d, x, y, off, s, f, fill, bg, dy=0, must=False):
     """Label beside its mark: the eight places around it, the side facing the dome's center
-    first, then the same ring a line further out. Where nothing is clear it takes the place
-    that overlaps least, so a label never wanders off from what it names."""
+    first, then the same ring a line further out. A label far from its mark is worse than
+    none, so where nothing close is clear it's dropped (False), unless it `must` show,
+    the headline's, which takes the place that overlaps least."""
     w, h = P.text_w(d, s, f), f.size
     spots = []
     for o in (off, off + h):
@@ -410,14 +436,16 @@ def side_label(d, x, y, off, s, f, fill, bg, dy=0):
         return (lx - 4, ly - 2, lx + w + 4, ly + h * 1.2)
 
     def overlap(sp):
-        b = box(*sp)
-        return sum(max(0, min(b[2], t[2]) - max(b[0], t[0])) * max(0, min(b[3], t[3]) - max(b[1], t[1]))
-                   for t in TAKEN)
+        return sum(overlaps(box(*sp), t) for t in TAKEN)
 
     on = [sp for sp in spots if inside(sp[0], sp[1] + h / 2, 4) and inside(sp[0] + w, sp[1] + h / 2, 4)] or spots
-    lx, ly = next((sp for sp in on if not overlap(sp)), None) or min(on, key=overlap)
+    clear = next((sp for sp in on if not overlap(sp)), None)
+    if not clear and not must:
+        return False
+    lx, ly = clear or min(on, key=overlap)
     TAKEN.append(box(lx, ly))
     glow_text(d, (lx, ly), s, f, fill, bg)
+    return True
 
 
 def draw_balloon(img, x, y, px, ink, bg, burst=False):
@@ -462,32 +490,53 @@ def claim_path(pts, half):
             TAKEN.append((x - half, y - half, x + half, y + half))
 
 
-def on_ground(th):
-    """True when something below the horizon falls inside the frame, so it's drawn there
-    with its rise time."""
-    x, y = dome_xy(th["el"], th["az"])
-    return SKY_BOX[0] + 30 < x < SKY_BOX[2] - 30 and SKY_BOX[1] + 30 < y < SKY_BOX[3] - 30
+def ghost_moon(moon, t):
+    """Where a Moon rising within 4 hours waits: just outside the rim, at the point where it
+    will come up, which is where to look. None when it's up, or rises later than that."""
+    if not moon.get("below") or not moon.get("rises") or moon["rises"] - t > 4 * 3600:
+        return None
+    a = math.radians(moon["rise_az"] - P.HEADING)
+    r = DOME_R + 34
+    return (min(max(DOME_X + r * math.sin(a), SKY_BOX[0] + 28), SKY_BOX[2] - 28),
+            min(max(DOME_Y - r * math.cos(a), SKY_BOX[1] + 28), SKY_BOX[3] - 28))
 
 
-def compass_boxes(d):
-    """Where N, E, S and W go, just outside the horizon, as boxes for labels to keep clear of."""
-    boxes = []
-    for lab, az in (("N", 0), ("E", 90), ("S", 180), ("W", 270)):
+def compass_letters(d):
+    """The compass points on the horizon, as (letter, font, box): N, E, S and W, and the
+    points between when the way you face isn't one of those, so the top has a name."""
+    pts = [(lab, az, COMPASS) for lab, az in (("N", 0), ("E", 90), ("S", 180), ("W", 270))]
+    if P.HEADING % 90:
+        pts += [(lab, az, SMALL) for lab, az in (("NE", 45), ("SE", 135), ("SW", 225), ("NW", 315))]
+    out = []
+    for lab, az, f in pts:
         x, y = dome_xy(0, az)
-        w = P.text_w(d, lab, COMPASS)
-        boxes.append((x - w / 2 - 4, y - COMPASS.size * 0.6 - 2, x + w / 2 + 4, y + COMPASS.size * 0.7))
-    return boxes
+        w = P.text_w(d, lab, f)
+        out.append((lab, f, (x - w / 2 - 4, y - f.size * 0.6 - 2, x + w / 2 + 4, y + f.size * 0.7)))
+    return out
+
+
+def join_names(names):
+    """Moon; Moon & Mars; Moon, Mars & Jupiter."""
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " & " + names[-1]
 
 
 def draw_dome(img, d, sky):
+    t = sky["t"]
     dome, ink = GROUND, THING
-    hk = sky["hero"]["kind"] if sky["hero"].get("start", 0) <= sky["t"] else None
-    hname = sky["hero"].get("name")
+    hero = sky["hero"]
+    hk = hero["kind"] if hero.get("start", 0) <= t else None
+    hname = hero.get("name")
 
     def lit(kind):
         return HERO if kind == hk else THING
+
+    def is_hero(th):
+        return th["kind"] == hk and (th["kind"] != "station" or th["name"] == hname)
     R = DOME_R
-    ghost = FRAME
+    things = sky["things"]
+    up = [th for th in things if not th.get("below")]
+    del TAKEN[:]
+    del NAMED[:]
     # Solid page, sky and ground alike: only the horizon line says where the sky ends
     d.ellipse((DOME_X - R, DOME_Y - R, DOME_X + R, DOME_Y + R), outline=FRAME, width=7)
 
@@ -496,37 +545,34 @@ def draw_dome(img, d, sky):
     cone = DOME_R * 0.34
     d.pieslice((DOME_X - cone, DOME_Y - cone, DOME_X + cone, DOME_Y + cone), 242, 298, fill=FRAME - 68)
 
-    things = sky["things"]
-    del TAKEN[:]
-    del NAMED[:]
-    # Compass letters on the horizon, in a gap cut in the line, like a compass bezel. First,
-    # so the sky draws over them (the Moon rising in the east beats the E), and taken, so
-    # no label lands on one
-    for lab, box in zip("NESW", compass_boxes(d)):
-        d.rectangle((box[0] - 4, box[1], box[2] + 4, box[3]), fill=GROUND)
-        d.text((box[0] + 4, box[1] + 2), lab, font=COMPASS, fill=SOFT)
-        TAKEN.append(box)
-    for th in [th for th in things if not th.get("below")]:
-        # Marks claim their space before any label goes down
-        x, y = dome_xy(th["el"], th["az"])
-        if th["kind"] in ("balloon", "pico"):
-            TAKEN.append((x - 30, y - 32, x + 30, y + 32))
-            continue
-        r = {"moon": 36, "station": 40, "sun": 36, "train": 18, "planet": 18}.get(th["kind"], 10)
-        TAKEN.append((x - r, y - r, x + r, y + r))
     limit = mag_limit(sky["sun_el"])
     if limit:
-        draw_stars(img, sky["t"], limit)
+        draw_stars(img, t, limit)
+    sun_ra, sun_dec, _ = astro.sun(t)
+    sel, saz = astro.alt_az(sun_ra, sun_dec, t, P.HOME_LAT, P.HOME_LON)
+    sun_xy = dome_xy(sel, saz)  # off the dome when it's down, which still points the right way
+
+    # Marks claim their space before any line or label goes down
+    moon = next((th for th in things if th["kind"] == "moon"), None)
+    ghost = moon and ghost_moon(moon, t)
+    marks = [(ghost[0] - 30, ghost[1] - 30, ghost[0] + 30, ghost[1] + 30)] if ghost else []
+    for th in up:
+        x, y = dome_xy(th["el"], th["az"])
+        if th["kind"] in ("balloon", "pico"):
+            x, y = dome_xy(max(th["el"], 5), th["az"])
+            marks.append((x - 30, y - 32, x + 30, y + 32))
+            continue
+        r = {"moon": 36, "station": 40, "sun": 36, "train": 18, "planet": 18}.get(th["kind"], 10)
+        marks.append((x - r, y - r, x + r, y + r))
+    TAKEN.extend(marks)
+    if limit:
         # The few brightest are sparkles, big enough that a label on one hides it
         for ra, dec, mag in SKY["stars"]:
             if mag < 0.6:
-                el, az = astro.alt_az(ra, dec, sky["t"], P.HOME_LAT, P.HOME_LON)
+                el, az = astro.alt_az(ra, dec, t, P.HOME_LAT, P.HOME_LON)
                 if el > 0:
                     x, y = dome_xy(el, az)
                     TAKEN.append((x - 14, y - 14, x + 14, y + 14))
-    sun_ra, sun_dec, _ = astro.sun(sky["t"])
-    sel, saz = astro.alt_az(sun_ra, sun_dec, sky["t"], P.HOME_LAT, P.HOME_LON)
-    sun_xy = dome_xy(sel, saz)  # off the dome when it's down, which still points the right way
 
     # By day, the Sun's whole path today, with a bead each hour
     day = sky.get("day")
@@ -534,56 +580,75 @@ def draw_dome(img, d, sky):
         pts = [dome_xy(SUN_HORIZON, day["rise_az"])] + [dome_xy(el, az) for _, el, az in day["arc"]] + \
             [dome_xy(SUN_HORIZON, day["set_az"])]
         d.line(pts, fill=FRAME, width=6, joint="curve")
+        claim_path(pts, 8)
         for tt, el, az in day["arc"]:
             if time.localtime(tt).tm_min == 0:
                 bx, by = dome_xy(el, az)
                 d.ellipse((bx - 7, by - 7, bx + 7, by + 7), fill=SOFT)
 
-    # You, under the middle of the sky, as a map marks you: a dot, on top of the cone
-    d.ellipse((DOME_X - 19, DOME_Y - 19, DOME_X + 19, DOME_Y + 19), fill=GROUND)
-    d.ellipse((DOME_X - 13, DOME_Y - 13, DOME_X + 13, DOME_Y + 13), fill=THING)
-
-    # Paths first, so no label ends up under a line: they claim their room like the marks
+    # Paths, so no label ends up under a line: they claim their room like the marks. The
+    # headline's path is heavy, any other thin and dim, and each is named where it starts
+    # unless its mark is up and named already
+    labels = []
     tr = sky.get("train")
     if tr:
         path = [dome_xy(k[1], k[2]) for k in tr["track"]]
-        dash_line(d, path, lit("train"), width=6, on=12, off=10)
+        if hero["kind"] == "train":
+            dash_line(d, path, lit("train"), width=9, on=14, off=10)
+        else:
+            dash_line(d, path, SOFT, width=5, on=12, off=12)
         claim_path(path, 10)
+        if not any(th["kind"] == "train" for th in up):
+            labels.append((hero["kind"] == "train", path[0][0], path[0][1], 24, "Starlink", BLABEL,
+                           lit("train") if hero["kind"] == "train" else SOFT, 0, []))
     # The headline's pass if it's a station's, else the ISS's, once it's within the hour
-    ps = sky["hero"].get("pass_") or sky.get("pass")
-    lead = sky["hero"].get("name") if sky["hero"].get("pass_") else "ISS"
-    if ps and ps["rise"] <= sky["t"] + 3600:
+    ps = hero.get("pass_") or sky.get("pass")
+    lead = hname if hero.get("pass_") else "ISS"
+    if ps and ps["rise"] <= t + 3600 and len(ps["track"]) > 1:
+        main = hero["kind"] == "station" and lead == hname
+        fill = (HERO if hk == "station" else THING) if main else SOFT
         pts = [(k[0], dome_xy(k[1], k[2])) for k in ps["track"]]
         # Heavy enough to survive e-ink: flown part solid, the rest in long dashes
-        flown = [p for tt, p in pts if tt <= sky["t"]]
-        ahead = [p for tt, p in pts if tt > sky["t"]]
+        flown = [p for tt, p in pts if tt <= t]
+        ahead = [p for tt, p in pts if tt > t]
         if flown and ahead:
             ahead.insert(0, flown[-1])
         if len(flown) > 1:
-            d.line(flown, fill=lit("station") if lead == hname else THING, width=14, joint="curve")
-        dash_line(d, ahead, lit("station") if lead == hname else THING, width=12, on=26, off=14)
+            d.line(flown, fill=fill, width=14 if main else 6, joint="curve")
+        dash_line(d, ahead, fill, width=12 if main else 5, on=26 if main else 14, off=14 if main else 12)
         claim_path([p for _, p in pts], 14)
         # Arrowhead where it leaves
         (xa, ya), (xb, yb) = pts[-2][1], pts[-1][1]
         ang = math.atan2(yb - ya, xb - xa)
-        d.polygon([(xb + 42 * math.cos(ang), yb + 42 * math.sin(ang)),
-                   (xb + 32 * math.cos(ang + 2.4), yb + 32 * math.sin(ang + 2.4)),
-                   (xb + 32 * math.cos(ang - 2.4), yb + 32 * math.sin(ang - 2.4))],
-                  fill=lit("station") if lead == hname else THING)
+        size = 1.0 if main else 0.6
+        d.polygon([(xb + 42 * size * math.cos(ang), yb + 42 * size * math.sin(ang)),
+                   (xb + 32 * size * math.cos(ang + 2.4), yb + 32 * size * math.sin(ang + 2.4)),
+                   (xb + 32 * size * math.cos(ang - 2.4), yb + 32 * size * math.sin(ang - 2.4))], fill=fill)
+        if not any(th["kind"] == "station" and th["name"] == lead for th in up):
+            x, y = pts[0][1]
+            labels.append((main, x, y, 26, lead, BLABEL, fill, 0, []))
 
-    # Things below the horizon, ghosted on the ground outside it
-    for th in [th for th in things if th.get("below") and th["kind"] == "moon"]:
-        x, y = dome_xy(th["el"], th["az"])
-        if not on_ground(th):
+    # Compass letters on the horizon, in a gap cut in the line (and in any path running
+    # through it), like a compass bezel. A mark sitting on one hides it: the Moon rising
+    # in the east says east better than the E it covers
+    for lab, f, box in compass_letters(d):
+        if any(overlaps(box, m) for m in marks):
             continue
-        if th["kind"] == "moon":
-            icons.paste(img, moon_icon(26, th["frac"], th["waxing"], x, y, sun_xy, True, ghost), x, y, dome)
-        else:
-            rr = 18 if th["kind"] == "sun" else 8
-            d.ellipse((x - rr, y - rr, x + rr, y + rr), outline=ghost, width=5)
+        d.rectangle((box[0] - 4, box[1], box[2] + 4, box[3]), fill=GROUND)
+        d.text((box[0] + 4, box[1] + 2), lab, font=f, fill=SOFT)
+        TAKEN.append(box)
+
+    # You, under the middle of the sky, as a map marks you: a dot, on top of the cone
+    d.ellipse((DOME_X - 19, DOME_Y - 19, DOME_X + 19, DOME_Y + 19), fill=GROUND)
+    d.ellipse((DOME_X - 13, DOME_Y - 13, DOME_X + 13, DOME_Y + 13), fill=THING)
+
+    # A Moon about to rise, waiting at the rim where it will come up, with when
+    if ghost:
+        x, y = ghost
+        icons.paste(img, moon_icon(26, moon["frac"], moon["waxing"], x, y, sun_xy, True, FRAME), x, y, dome)
         # The rise time, unless the headline is this very rise and already says it
-        said = sky["hero"]["kind"] == th["kind"] and sky["hero"].get("start") == th.get("rises")
-        lab = th["name"] + (" rises " + clock(th["rises"]) if th.get("rises") and not said else "")
+        said = hero["kind"] == "moon" and hero.get("start") == moon["rises"]
+        lab = "Moon" if said else "Moon rises " + clock_ap(moon["rises"])
         w, h = P.text_w(d, lab, SMALL), SMALL.size
         # Below, above, right or left of it: the first spot clear of the compass letters,
         # and outside the dome, where the ground is
@@ -593,76 +658,70 @@ def draw_dome(img, d, sky):
 
         def cost(sp, w=w, h=h):
             b = (sp[0] - 4, sp[1] - 2, sp[0] + w + 4, sp[1] + h * 1.2)
-            hit = sum(max(0, min(b[2], c[2]) - max(b[0], c[0])) * max(0, min(b[3], c[3]) - max(b[1], c[1]))
-                      for c in compass_boxes(d) + TAKEN)
-            return hit, inside((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+            return sum(overlaps(b, c) for c in TAKEN), inside((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
 
         lx, ly = min(spots, key=cost)
         TAKEN.append((lx - 4, ly - 2, lx + w + 4, ly + h * 1.2))
         glow_text(d, (lx, ly), lab, SMALL, SOFT, GROUND)
-        named(th["name"], th["km"], th["kind"])
+        named("Moon", moon["km"], "moon")
 
-    for th in [th for th in things if not th.get("below")]:
+    planets_near = []
+    for th in up:
         x, y = dome_xy(th["el"], th["az"])
         if th["kind"] == "moon":
             icons.paste(img, moon_icon(34, th["frac"], th["waxing"], x, y, sun_xy, True, lit("moon")), x, y, dome)
-            near = [p["name"] for p in things if p["kind"] == "planet" and not p.get("below")
-                    and math.hypot(*(a - b for a, b in zip(dome_xy(p["el"], p["az"]), (x, y)))) < 100]
-            side_label(d, x, y, 44, " & ".join(["Moon"] + near), LABEL, lit("moon"), dome, dy=-30)
-            named("Moon", th["km"], "moon")
-            for p in things:
-                if p["name"] in near:
-                    named(p["name"], p["km"], "planet")
+            near = [p for p in up if p["kind"] == "planet"
+                    and math.hypot(*(a - b for a, b in zip(dome_xy(p["el"], p["az"]), (x, y)))) < NEAR_MOON]
+            planets_near = [p["name"] for p in near]
+            labels.append((is_hero(th), x, y, 44, join_names(["Moon"] + planets_near), LABEL, lit("moon"), -30,
+                           [("Moon", th["km"], "moon")] + [(p["name"], p["km"], "planet") for p in near]))
         elif th["kind"] == "planet":
             # Ringed for the giants, a sparkle for Venus, a plain dot for Mars
             icon = {"Venus": ("sparkle", 34), "Mars": ("dot", 16)}.get(th["name"], ("planet", 38))
             icons.paste(img, icons.glyph(icon[0], icon[1], ink), x, y, dome)
-            if not moon_near(things, x, y):
-                side_label(d, x, y, 24, th["name"], LABEL, ink, dome, dy=4)
-                named(th["name"], th["km"], "planet")
         elif th["kind"] == "sun":
             icons.paste(img, icons.glyph("sun", 68, ink), x, y, dome)
-            side_label(d, x, y, 46, "Sun", LABEL, ink, dome)
-            named("Sun", th["km"], "sun")
+            labels.append((is_hero(th), x, y, 46, "Sun", LABEL, ink, 0, [("Sun", th["km"], "sun")]))
+    for th in up:
+        if th["kind"] == "planet" and th["name"] not in planets_near:
+            x, y = dome_xy(th["el"], th["az"])
+            labels.append((False, x, y, 24, th["name"], LABEL, ink, 4, [(th["name"], th["km"], "planet")]))
 
-    tr = sky.get("train")
     if tr:
         # A bead for each one up right now, on the path drawn with the others above
-        path = [dome_xy(k[1], k[2]) for k in tr["track"]]
-        beads = [dome_xy(th["el"], th["az"]) for th in things if th["kind"] == "train"]
-        for x, y in beads:
+        beads = [(dome_xy(th["el"], th["az"]), th["km"]) for th in up if th["kind"] == "train"]
+        for (x, y), _ in beads:
             icons.paste(img, icons.glyph("satellite", 30, lit("train")), x, y, dome)
-        at = min(beads, key=lambda b: b[1]) if beads else path[len(path) // 2]
-        side_label(d, at[0], at[1], 26, "Starlink", BLABEL, lit("train"), dome)
-        cars = [th["km"] for th in things if th["kind"] == "train"]
-        if cars:
-            named("Starlink", min(cars), "train")
+        if beads:
+            at = min(beads, key=lambda b: b[0][1])[0]
+            labels.append((hk == "train", at[0], at[1], 26, "Starlink", BLABEL, lit("train"), 0,
+                           [("Starlink", min(km for _, km in beads), "train")]))
 
-    for pb in (th for th in things if th["kind"] == "pico"):
-        x, y = dome_xy(max(pb["el"], 5), pb["az"])
-        draw_balloon(img, x, y, 48, lit("pico"), dome)
-        side_label(d, x, y, 32, pb["name"], BLABEL, lit("pico"), dome)
-        named(pb["name"], pb["km"], "pico")
-
-    b = next((th for th in things if th["kind"] == "balloon"), None)
-    if b:
-        # Nudged up off the horizon line when it's very low, so the whole icon shows
-        x, y = dome_xy(max(b["el"], 5), b["az"])
-        draw_balloon(img, x, y, 56, lit("balloon"), dome, burst=not b["rising"])
-        side_label(d, x, y, 36, "Balloon", BLABEL, lit("balloon"), dome)
-        named("Balloon", b["km"], "balloon")
-
-    for th in things:
-        if th["kind"] == "station":
+    for th in up:
+        if th["kind"] in ("pico", "balloon"):
+            x, y = dome_xy(max(th["el"], 5), th["az"])  # nudged up off the horizon line so it all shows
+            if th["kind"] == "pico":
+                draw_balloon(img, x, y, 48, lit("pico"), dome)
+                labels.append((is_hero(th), x, y, 32, th["name"], BLABEL, lit("pico"), 0, [(th["name"], th["km"], "pico")]))
+            else:
+                draw_balloon(img, x, y, 56, lit("balloon"), dome, burst=not th["rising"])
+                labels.append((is_hero(th), x, y, 36, "Balloon", BLABEL, lit("balloon"), 0, [("Balloon", th["km"], "balloon")]))
+        elif th["kind"] == "station":
             x, y = dome_xy(th["el"], th["az"])
             level = lit("station") if th["name"] == hname else THING
             icon = icons.glyph("satellite", 70, level)
             icons.paste(img, icon, x, y, dome)
-            side_label(d, x, y - 4, icon[0].width // 2 + 10, th["name"], BLABEL, level, dome)
-            named(th["name"], th["km"], "station")
+            labels.append((is_hero(th), x, y - 4, icon[0].width // 2 + 10, th["name"], BLABEL, level, 0,
+                           [(th["name"], th["km"], "station")]))
+
+    # The headline's label first, so it gets the clearest place; the rest only where there's room
+    for must, x, y, off, s, f, fill, dy, names in sorted(labels, key=lambda lb: not lb[0]):
+        if side_label(d, x, y, off, s, f, fill, dome, dy=dy, must=must):
+            for name in names:
+                named(*name)
 
     if limit:
-        star_names(d, sky["t"])
+        star_names(d, t, limit)
 
 
 
@@ -701,34 +760,59 @@ def moon_phase(frac, waxing):
     return ("Waxing " if waxing else "Waning ") + ("gibbous moon" if frac > 0.5 else "crescent moon")
 
 
+def clock_ap(t):
+    """A time with am or pm, for where nothing beside it says which half of the day."""
+    return clock(t) + (" am" if time.localtime(t).tm_hour < 12 else " pm")
+
+
+def days_apart(t, now):
+    """Calendar days from now's date to t's, counted noon to noon, so a change of clocks or
+    the new year can't throw it."""
+    a, b = time.localtime(t), time.localtime(now)
+    return int(round((time.mktime(a[:3] + (12, 0, 0, 0, 0, -1)) - time.mktime(b[:3] + (12, 0, 0, 0, 0, -1))) / 86400))
+
+
 def when_clock(t, now):
-    """8:01, or 'tomorrow 8:01' / 'Sat 8:01' past midnight."""
-    day = time.localtime(t).tm_yday - time.localtime(now).tm_yday
-    return clock(t) if day == 0 else ("tomorrow %s" % clock(t) if day == 1 else
-                                      time.strftime("%a ", time.localtime(t)) + clock(t))
+    """8:01 pm, or 'tomorrow 8:01 am' / 'Sat 8:01 am' on another day."""
+    days = days_apart(t, now)
+    return clock_ap(t) if days == 0 else ("tomorrow " if days == 1 else time.strftime("%a ", time.localtime(t))) + clock_ap(t)
 
 
 def day_word(t, now):
-    """When, in the caps under a time, since the clock has no am or pm: TONIGHT, TOMORROW AM."""
+    """When, as words that also say am or pm: THIS MORNING, THIS AFTERNOON, TONIGHT, LATE
+    TONIGHT, TOMORROW NIGHT, SAT MORNING. A night runs to 6 am, so 2:00 after Saturday is
+    Saturday night, and after midnight the coming evening is THIS EVENING, not tonight."""
     lt = time.localtime(t)
-    days = round((time.mktime(lt[:3] + (12, 0, 0, 0, 0, -1)) -
-                  time.mktime(time.localtime(now)[:3] + (12, 0, 0, 0, 0, -1))) / 86400)
-    half = "AM" if lt.tm_hour < 12 else "PM"
-    if days == 0:
-        return "TONIGHT" if lt.tm_hour >= 18 else ("THIS MORNING" if half == "AM" else "THIS AFTERNOON")
+    if 6 <= lt.tm_hour < 18:
+        days = days_apart(t, now)
+        part = "MORNING" if lt.tm_hour < 12 else "AFTERNOON"
+        return ("THIS " if days <= 0 else "TOMORROW " if days == 1 else time.strftime("%a ", lt).upper()) + part
+    night = t - 6 * 3600
+    days = days_apart(night, now)
+    if days <= 0:
+        if lt.tm_hour >= 18 and time.localtime(now).tm_hour < 6:
+            return "THIS EVENING"
+        return "LATE TONIGHT" if lt.tm_hour < 6 else "TONIGHT"
     if days == 1:
-        return "TOMORROW " + half
-    return time.strftime("%a ", lt).upper() + half
+        return "TOMORROW NIGHT"
+    return time.strftime("%a", time.localtime(night)).upper() + " NIGHT"
 
 
-def countdown(start, end, t):
-    """The line under the path: how long until it starts, or that it's up now."""
+def look_when(start, end, t, az):
+    """The line under the path, as what to do: where to look and when once it's close, how
+    long it lasts while it's further off, and that it's up once it is."""
     if t >= start:
         return "Up now" if t <= end else "Gone"
-    mins = (start - t) / 60
-    if mins < 90:
-        return "In %d min" % max(1, round(mins))
-    return "Up for %d min" % max(1, round((end - start) / 60))
+    if start - t < 90 * 60:
+        return "Look %s at %s" % (P.compass(az), clock(start))
+    return "Lasts %d min" % max(1, round((end - start) / 60))
+
+
+def height(el, az=None):
+    """How high, in words that match the dome: the rim is LOW, the middle OVERHEAD."""
+    word = "LOW" if el < 20 else "HALFWAY\u00a0UP" if el < 50 else "HIGH" if el < 75 else "OVERHEAD"
+    # No-break spaces, so a narrow column breaks it as LOW / IN THE SE
+    return word if az is None or word == "OVERHEAD" else "%s IN\u00a0THE\u00a0%s" % (word, P.compass(az))
 
 
 def along(start, end, t):
@@ -763,23 +847,19 @@ def score(ev, t):
 
 
 def how_soon(at, now, timed):
-    """For the Next line: tonight 8:49, tomorrow night, in 25 days."""
-    lt = time.localtime(at)
-    days = round((time.mktime(lt[:3] + (12, 0, 0, 0, 0, -1)) -
-                  time.mktime(time.localtime(now)[:3] + (12, 0, 0, 0, 0, -1))) / 86400)
+    """For the Next line: 8:49 tonight, tomorrow night, in 25 days."""
+    days = days_apart(at - (6 * 3600 if time.localtime(at).tm_hour < 6 else 0), now)
+    # No-break spaces: when the line wraps, it breaks between the what and the when
     if days >= 2:
-        return "in %d days" % days
-    word = night_word(at, now) if lt.tm_hour >= 18 or lt.tm_hour < 6 else ("today" if days == 0 else "tomorrow")
-    return word + (" " + clock(at) if timed else "")
+        return "in\u00a0%d\u00a0days" % days
+    return ((clock(at) + " " if timed else "") + day_word(at, now).lower()).replace(" ", "\u00a0")
 
 
 def night_word(t, now):
-    """Tonight, tomorrow night, Sat night: for things that belong to a night."""
+    """Tonight, tomorrow night, Sat night, or the date past a week: for things that belong to a night."""
     if t - now > 6 * 86400:
         return time.strftime("%b %-d", time.localtime(t))
-    d = day_word(t, now)
-    return {"TONIGHT": "tonight", "TOMORROW PM": "tomorrow night", "TOMORROW AM": "tomorrow night"}.get(
-        d, time.strftime("%a", time.localtime(t)) + " night")
+    return day_word(t, now).lower()
 
 
 def pass_event(name, ps, t):
@@ -794,10 +874,19 @@ def pass_event(name, ps, t):
         return None
     return dict(kind="station", name=name, pass_=ps, wonder=wonder,
                 start=ps["rise"], end=ps["set"], head=name + " " + up,
-                stats=[(clock(ps["peak"]), day_word(ps["peak"], t)), ("%d°" % ps["peak_el"], "UP")],
-                path=(P.compass(ps["rise_az"]), P.compass(ps["set_az"]), along(ps["rise"], ps["set"], t)),
-                foot=countdown(ps["rise"], ps["set"], t),
-                next=("%s %s" % (name, up), ps["peak"], True))
+                stats=[when_stat(ps["peak"], ps["rise"], ps["set"], t), ("%d°" % ps["peak_el"], height(ps["peak_el"]))],
+                path=path(ps["rise_az"], ps["set_az"], along(ps["rise"], ps["set"], t)),
+                foot=look_when(ps["rise"], ps["set"], t, ps["rise_az"]),
+                next=(name + (" overhead" if up == "overhead" else ""), ps["peak"], True))
+
+
+def when_stat(at, start, end, t):
+    """The time to go out, with when as words; once it's on, when it'll be gone instead."""
+    return (clock(end), "GONE BY") if t >= start else (clock(at), day_word(at, t))
+
+
+def path(rise_az, set_az, frac):
+    return (P.compass(rise_az), P.compass(set_az), frac, rise_az, set_az)
 
 
 def shower_events(t, lat, lon):
@@ -843,9 +932,9 @@ def events(sky):
     evs = []
     if tr:
         evs.append(dict(kind="train", wonder=4, start=tr["start"], end=tr["end"], head="Starlink train",
-                        stats=[("%d" % tr["n"], "IN A LINE"), (clock(tr["start"]), day_word(tr["start"], t))],
-                        path=(P.compass(tr["rise_az"]), P.compass(tr["set_az"]), along(tr["start"], tr["end"], t)),
-                        foot=countdown(tr["start"], tr["end"], t), next=("Starlink train", tr["start"], True)))
+                        stats=[("%d" % tr["n"], "IN A LINE"), when_stat(tr["start"], tr["start"], tr["end"], t)],
+                        path=path(tr["rise_az"], tr["set_az"], along(tr["start"], tr["end"], t)),
+                        foot=look_when(tr["start"], tr["end"], t, tr["rise_az"]), next=("Starlink train", tr["start"], True)))
     for name, station_pass in sky.get("passes", []):
         ev = pass_event(name, station_pass, t)
         if ev:
@@ -854,26 +943,39 @@ def events(sky):
     if pico:
         # A balloon on its own, from a ham radio club or a school: the long ones circle the world
         evs.append(dict(kind="pico", wonder=4 if (pico["days"] or 0) >= 7 else 3, start=t, end=t, head=pico["name"],
-                        stats=[("%.0f" % pico["alt_km"], "KM UP"), ("%d°" % pico["el"], "UP IN THE " + P.compass(pico["az"]))],
+                        stats=[("%.0f" % pico["alt_km"], "KM UP"), ("%d°" % pico["el"], height(pico["el"], pico["az"]))],
                         foot="%s, day %d aloft" % (pico["call"], pico["days"]) if pico["days"] else pico["call"]))
     b = next((th for th in things if th["kind"] == "balloon"), None)
     if b:
         evs.append(dict(kind="balloon", wonder=3, start=t, end=t, head="Weather balloon",
-                        stats=[("%.0f" % b["alt_km"], "KM UP"), ("%d°" % max(0, b["el"]), "UP IN THE " + P.compass(b["az"]))],
+                        stats=[("%.0f" % b["alt_km"], "KM UP"), ("%d°" % b["el"], height(b["el"], b["az"]))],
                         foot=("Climbing" if b["rising"] else "Falling") + ", from " + launch_site(b["track"][0])))
     day = sky.get("day")
+    sun = next((th for th in things if th["kind"] == "sun"), None)
     if day:
         # Daylight: the day as a path from sunrise to sunset, and how it's changing
-        sun = next((th for th in things if th["kind"] == "sun"), None)
-        diff = day["length"] - sky["yesterday"]["length"] if sky.get("yesterday") else 0
+        yd, tm = sky.get("yesterday"), sky.get("tomorrow")
+        diff = day["length"] - yd["length"] if yd else 0
+        span = max(h for _, h in sky["year"]) - min(h for _, h in sky["year"])
+        longest = yd and tm and day["length"] >= max(yd["length"], tm["length"]) and span > 1
         evs.append(dict(kind="sun", wonder=2, start=day["rise"], end=day["set"], head="Sunset " + clock(day["set"]),
                         stats=[(hm(day["length"]), "OF DAYLIGHT"),
-                               ("%d°" % (sun["el"] if sun else 0), "UP IN THE " + P.compass(sun["az"] if sun else 180))],
-                        path=(P.compass(day["rise_az"]), P.compass(day["set_az"]), along(day["rise"], day["set"], t)),
+                               ("%d°" % max(0, sun["el"] if sun else 0), height(sun["el"] if sun else 0, sun["az"] if sun else 180))],
+                        path=path(day["rise_az"], day["set_az"], along(day["rise"], day["set"], t)),
                         icon="sun",
-                        foot="Longest day of the year" if abs(diff) < 15 and day["length"] > 12 * 3600 else
-                        ("Gaining %s a day" % ms(diff) if diff > 0 else
-                         ("Stars out by " + clock(day["dark"]) if day.get("dark") else None))))
+                        foot="Longest day of the year" if longest else
+                        ("Gaining %s a day" % ms(diff) if diff > 0 and span > 1 else
+                         ("Stars out by " + clock_ap(day["dark"]) if day.get("dark") else None))))
+    else:
+        # The Sun stays up all day, or down: the far north's summer and winter
+        up = day_length_h(t, lat) > 12
+        turn = kept("polar", t, time.strftime("%Y-%m-%d", time.localtime(t)), 86400,
+                    lambda: next((k for k in range(1, 200) if 0 < day_length_h(t + k * 86400, lat) < 24), None))
+        evs.append(dict(kind="sun", wonder=3, start=t, end=t + 3600, head="Midnight sun" if up else "Polar night",
+                        stats=[("24h", "OF DAYLIGHT"), ("%d°" % sun["el"], height(sun["el"], sun["az"]))]
+                        if up and sun and sun["el"] > 0 else [],
+                        foot=("Sunset" if up else "Sunrise") + (" in %d days" % turn if turn and turn > 1 else
+                                                               " tomorrow" if turn else " in months")))
     rise = day["rise"] if day and t < day["rise"] else (sky.get("tomorrow") or {}).get("rise")
     if rise:
         evs.append(dict(kind="sun", wonder=1, start=rise, end=rise + 3600, head="Sunrise " + clock(rise), stats=[]))
@@ -882,24 +984,27 @@ def events(sky):
         full = moon["frac"] > 0.97
         phase = moon_phase(moon["frac"], moon["waxing"])
         if not moon.get("below") and sky["sun_el"] < 0:
-            # A full or new moon says how lit it is in its name; the percent is for the others
+            # A full or new moon says how lit it is in its name; the percent is for the others.
+            # Low in the haze of the horizon it's a sight for whoever happens to look
             lit = [] if phase in ("Full moon", "New moon") else [("%d%%" % round(moon["frac"] * 100), "LIT")]
-            evs.append(dict(kind="moon", wonder=3 if full else 2, start=t, end=moon.get("sets") or t + 3600, head=phase,
-                            stats=[("%d°" % moon["el"], "UP IN THE " + P.compass(moon["az"]))] + lit,
+            evs.append(dict(kind="moon", wonder=1 if moon["el"] < 10 else (3 if full else 2), start=t,
+                            end=moon.get("sets") or t + 3600, head=phase,
+                            stats=[("%d°" % moon["el"], height(moon["el"], moon["az"]))] + lit,
                             foot="Sets %s" % when_clock(moon["sets"], t) if moon.get("sets") else None))
         elif moon.get("rises") and astro.sun_alt(moon["rises"], lat, lon) < 0:
             # Rising later tonight: a headline in advance, once it's the best thing coming
-            az = astro.moon_alt_az(moon["rises"], lat, lon)[1]
             evs.append(dict(kind="moon", wonder=3 if full else 2, start=moon["rises"], end=moon["rises"] + 6 * 3600,
                             head=phase, stats=[(clock(moon["rises"]), day_word(moon["rises"], t)),
                                                ("%d%%" % round(moon["frac"] * 100), "LIT")],
-                            foot="Rises in the " + P.compass(az),
-                            # The dome already says it when the Moon is drawn below the horizon
-                            next=None if on_ground(moon) else ("Moon rises", moon["rises"], True)))
+                            foot="Rises in the " + P.compass(moon["rise_az"]),
+                            # The dome already says it when the Moon waits at the rim
+                            next=None if ghost_moon(moon, t) else ("Moon rises", moon["rises"], True)))
+    # The coming full moon, for the Next line only: as a headline it would name something
+    # the dome can't show
     fm = kept("fullmoon", t, None, 6 * 3600, lambda: next_full_moon(t + 86400), ends=lambda when: when)
     if fm and fm > t + 86400:
         evs.append(dict(kind="moon", wonder=3, start=fm, end=fm + 6 * 3600, head="Full moon", stats=[],
-                        next=("Full moon", fm, False)))
+                        next=("Full moon", fm, False), next_only=True))
     evs += kept("showers", t, time.localtime(t).tm_year, 86400, lambda: shower_events(t, lat, lon))
     return evs
 
@@ -908,11 +1013,13 @@ def hero(sky):
     """The headline and, below it, the most wonderful thing in the coming week."""
     t = sky["t"]
     evs = events(sky)
-    # Ties (an overhead pass while a train crosses): the station, the rarer sight, then the sooner
-    rank = {"station": 2, "train": 1, "pico": 1}
-    best = max(evs, key=lambda ev: (score(ev, t), rank.get(ev["kind"], 0), -ev["start"])) if evs else None
-    if not best or score(best, t) <= 0:
-        best = dict(kind=None, head="Clear above", stats=[])
+    # Ties: what you can see over what you can't (a balloon is a dot at best), the station
+    # over a train, then the sooner
+    rank = {"station": 3, "train": 2, "shower": 2, "moon": 1, "sun": 1}
+    heads = [ev for ev in evs if not ev.get("next_only")]
+    best = max(heads, key=lambda ev: (score(ev, t), rank.get(ev["kind"], 0), -ev["start"])) if heads else None
+    # A copy: the events are kept between frames, and this one's Next is only for now
+    best = dict(best) if best and score(best, t) > 0 else dict(kind=None, head="Clear above", stats=[])
     ahead = [ev for ev in evs if ev is not best and ev.get("next") and t < ev["start"]
              and ev["start"] < t + (YEARLY_DAYS if ev.get("yearly") else NEXT_DAYS) * 86400
              and not (ev["kind"] == best["kind"] and ev["start"] == best["start"])]
@@ -962,7 +1069,9 @@ def draw_balloon_side(d, b, x0, y, width):
     y += 40  # headroom for the balloon at the top of its climb
     tr = b["track"]
     lat0, lon0 = tr[0][1], tr[0][2]
-    pts = [((lo - lon0) * 111.32 * math.cos(math.radians(lat0)), a / 1000) for _, la, lo, a in tr]
+    # East on whichever side the dome has it, so the drift and the dome agree
+    east = 1 if dome_xy(0, 90)[0] >= dome_xy(0, 270)[0] else -1
+    pts = [(east * (lo - lon0) * 111.32 * math.cos(math.radians(lat0)), a / 1000) for _, la, lo, a in tr]
     top_km = max(35.0, pts[-1][1])
     cw, ch = width - P.text_w(d, "30 km", SMALL) - 16, 170
     turn = wind_turn(pts)
@@ -992,39 +1101,52 @@ def draw_balloon_side(d, b, x0, y, width):
         tx, ty = xy(tx_km, turn)
         lab = "wind turns"
         lx = tx - 14 - P.text_w(d, lab, SMALL) if west_bend else tx + 14
+        # A gap in the gridline behind it
+        d.rectangle((lx - 8, ty - SMALL.size * 0.6, lx + P.text_w(d, lab, SMALL) + 8, ty + SMALL.size * 0.7), fill=GROUND)
         glow_text(d, (lx, ty - SMALL.size * 0.6), lab, SMALL, SOFT, GROUND)
-    lab = "west      drift      east"
+    lab = "west      drift      east" if east > 0 else "east      drift      west"
     d.text((x0 + cw / 2 - P.text_w(d, lab, SMALL) / 2, y + ch + 6), lab, font=SMALL, fill=SOFT)
     return y + ch + SMALL.size + 30
 
 
 def draw_stats(d, x, y, w, stats):
-    """Two big numbers with their caps under them, as the planes frame's height and speed."""
+    """Two big numbers with their caps under them, as the planes frame's height and speed,
+    in two fixed columns so the second number doesn't move from state to state. Both shrink
+    together when one won't fit; caps wrap to a second line."""
+    gap = 24
+    cw = (w - gap) // 2
     sf = NUM
-    cols = [max(P.text_w(d, v, sf), P.text_w(d, lab, CAPS), 200) for v, lab in stats]
-    while sf.size > 64 and sum(cols) + 44 * (len(cols) - 1) > w:
+    while sf.size > 56 and any(P.text_w(d, v, sf) > cw for v, _ in stats):
         sf = P.font(TF["num"], sf.size - 4)
-        cols = [max(P.text_w(d, v, sf), P.text_w(d, lab, CAPS), 170) for v, lab in stats]
-    sx = x
-    for (value, lab), cw in zip(stats, cols):
+    rows = 1
+    for i, (value, lab) in enumerate(stats):
+        # Only a value too wide even at the smallest size (a day's length) pushes the other over
+        sx = x if not i else max(x + cw + gap, x + P.text_w(d, stats[0][0], sf) + 40)
         d.text((sx, y), value, font=sf, fill=HERO)
-        d.text((sx + 2, y + sf.size + 10), lab, font=CAPS, fill=SOFT)
-        sx += cw + 44
-    return y + sf.size + CAPS.size + 44
+        lines = P.wrap(d, lab, TF["name"], CAPS.size, cw, floor=CAPS.size)
+        for k, (ln, f) in enumerate(lines):
+            d.text((sx + 2, y + sf.size + 10 + k * (CAPS.size + 4)), ln, font=f, fill=SOFT)
+        rows = max(rows, len(lines))
+    return y + sf.size + rows * (CAPS.size + 4) + 40
 
 
-def draw_path(d, x, y, w, rise, sets, frac, icon):
+def draw_path(d, x, y, w, rise, sets, frac, rise_az, set_az, icon):
     """Where it comes up and where it goes down, solid for the part it has crossed, with
-    the thing itself on the line: the planes frame's progress bar, for the sky."""
+    the thing itself on the line: the planes frame's progress bar, for the sky. It runs the
+    way the dome does: whichever end is further left there is on the left here."""
     ly = y + 10
-    fx = x + 22 + int((w - 44) * frac)
-    d.line((fx, ly, x + w, ly), fill=FRAME, width=8)
-    d.line((x, ly, fx, ly), fill=HERO, width=8)
-    d.ellipse((x - 1, ly - 9, x + 17, ly + 9), fill=HERO)
-    d.ellipse((x + w - 18, ly - 9, x + w, ly + 9), outline=SOFT, width=5, fill=GROUND)
+    flip = dome_xy(0, rise_az)[0] > dome_xy(0, set_az)[0]
+    a, b = (x + w, x) if flip else (x, x + w)  # where it rises, where it sets
+    side = -1 if flip else 1
+    fx = a + side * (22 + int((w - 44) * frac))
+    d.line((min(fx, b), ly, max(fx, b), ly), fill=FRAME, width=8)
+    d.line((min(a, fx), ly, max(a, fx), ly), fill=HERO, width=8)
+    d.ellipse((min(a - side, a + side * 17), ly - 9, max(a - side, a + side * 17), ly + 9), fill=HERO)
+    d.ellipse((min(b, b - side * 18), ly - 9, max(b, b - side * 18), ly + 9), outline=SOFT, width=5, fill=GROUND)
     icons.paste(P.CANVAS, icons.glyph(icon, 50, HERO, 0, 6), fx, ly, GROUND)
-    d.text((x, y + 40), rise, font=CAPS, fill=SOFT)
-    d.text((x + w - P.text_w(d, sets, CAPS), y + 40), sets, font=CAPS, fill=SOFT)
+    left, right = (sets, rise) if flip else (rise, sets)
+    d.text((x, y + 40), left, font=CAPS, fill=SOFT)
+    d.text((x + w - P.text_w(d, right, CAPS), y + 40), right, font=CAPS, fill=SOFT)
     return y + 40 + CAPS.size + 30
 
 
@@ -1034,6 +1156,8 @@ def draw_year(d, sky, x0, y, width, bottom):
     the shortest's below the trough, so the line never runs through either, months under."""
     pts = sky["year"]
     lo, hi = min(h for _, h in pts), max(h for _, h in pts)
+    if hi - lo < 1:
+        return  # near the equator the year hardly changes the day: a flat line says nothing
     line_h = SMALL.size + 10
     top = y + line_h
     ch = min(150, bottom - top - 2 * line_h - 10)
@@ -1045,9 +1169,10 @@ def draw_year(d, sky, x0, y, width, bottom):
 
     d.line([xy(*p) for p in pts], fill=SOFT, width=5, joint="curve")
     today = time.localtime(sky["t"]).tm_yday
+    now_h = min(hi, max(lo, day_length_h(sky["t"], P.HOME_LAT)))
     for (doy, h), above in ((max(pts, key=lambda p: p[1]), True), (min(pts, key=lambda p: p[1]), False)):
-        if abs(doy - today) < 12:
-            continue  # today is the extreme: its dot says so
+        if abs(doy - today) < 12 or abs(h - now_h) < 0.05:
+            continue  # today is the extreme (or level with it, where the Sun never sets): its dot says so
         px_, py_ = xy(doy, h)
         lab = hm(h * 3600)
         lw = P.text_w(d, lab, SMALL)
@@ -1056,7 +1181,7 @@ def draw_year(d, sky, x0, y, width, bottom):
     for i, m in enumerate("JFMAMJJASOND"):
         mx = x0 + (i + 0.5) / 12.0 * width
         d.text((mx - P.text_w(d, m, SMALL) / 2, top + ch + line_h + 6), m, font=SMALL, fill=FRAME)
-    tx, ty = xy(today, sky["day"]["length"] / 3600.0)
+    tx, ty = xy(today, now_h)
     d.ellipse((tx - 13, ty - 13, tx + 13, ty + 13), fill=HERO)
 
 
@@ -1082,20 +1207,27 @@ def draw_panel(d, sky):
         y += ff.size + 20
 
     bottom = P.TEXT[3] - 10
+    sky["baseline"] = bottom - 6
     if h.get("next"):
-        # What's coming: the week's most wonderful thing, on the last line
+        # What's coming: the week's most wonderful thing, at the foot, on two lines if it must
         line = "Next: " + h["next"]
-        f = P.fit_font(d, line, TF["name"], RUNG.size, width, floor=30)
-        d.text((x0, bottom - f.size - 6), line, font=f, fill=THING)
-        bottom -= f.size + 30
+        f = P.fit_font(d, line, TF["name"], RUNG.size, width, floor=CAPS.size)
+        lines = [(line, f)] if P.text_w(d, line, f) <= width else \
+            P.wrap(d, line, TF["name"], RUNG.size, width, floor=CAPS.size)[:2]
+        for i, (ln, f) in enumerate(lines):
+            ly = bottom - (len(lines) - i) * (f.size + 8)
+            d.text((x0, ly), ln, font=f, fill=THING)
+            sky["baseline"] = ly + f.getmetrics()[0]
+        bottom -= len(lines) * (RUNG.size + 8) + 24
     if h["kind"] == "sun" and h["stats"]:
         draw_year(d, sky, x0, y + 20, width, bottom)
         return
 
     # How far away each thing named on the dome is, farthest first: a key to the dome, so
-    # everything on one is on the other. Only in quiet moments: while something worth going
-    # out for is on or coming within the hour, the panel stays on it. And whole or not at all
-    if "wonder" in h and score(h, sky["t"]) >= 3:
+    # everything on one is on the other. Only in quiet moments, when the headline is the
+    # Sun, the Moon or nothing: around a pass, a train, a shower or a balloon the panel
+    # stays on it. And whole or not at all
+    if h["kind"] not in (None, "sun", "moon"):
         return
     items = sorted(NAMED, key=lambda i: i[1])
     top, gap = y + 30, 64
@@ -1122,8 +1254,9 @@ def render(data, t, note=None):
     draw_dome(img, d, sky)
     draw_panel(d, sky)
     if note:
-        # Bottom corner beside the dome, which the circle leaves empty
-        d.text((SKY_BOX[2] - P.text_w(d, note, NOTE), P.TEXT[3] - NOTE.size - 6), note, font=NOTE, fill=SOFT)
+        # Bottom corner beside the dome, which the circle leaves empty, on the Next line's baseline
+        base = sky.get("baseline", P.TEXT[3] - 16)
+        d.text((SKY_BOX[2] - P.text_w(d, note, NOTE), base - NOTE.getmetrics()[0]), note, font=NOTE, fill=SOFT)
     return img, sky
 
 
@@ -1178,16 +1311,18 @@ def fetch_orbits(session, now):
         if not r.text.startswith("OBJECT_NAME"):
             raise ValueError("not CelesTrak CSV: %r" % r.text[:60])
         got[group] = list(csv.DictReader(io.StringIO(r.text)))
-    keep = [row for row in got["stations"] if row["OBJECT_NAME"] in ("ISS (ZARYA)", "CSS (TIANHE)")]
+    keep = [row for row in got["stations"] if row.get("OBJECT_NAME") in ("ISS (ZARYA)", "CSS (TIANHE)")]
     if not keep:
         raise ValueError("no ISS in CelesTrak's stations")
-    starlink = [row for row in got["last-30-days"] if row["OBJECT_NAME"].startswith("STARLINK")]
+    # A download cut off mid-row leaves fields missing (None): skip those rows
+    starlink = [row for row in got["last-30-days"]
+                if (row.get("OBJECT_NAME") or "").startswith("STARLINK") and len(row.get("OBJECT_ID") or "") >= 8]
     if starlink:
         # OBJECT_ID is the launch: 2026-159A is the first object of 2026's 159th
         newest = max(row["OBJECT_ID"][:8] for row in starlink)
         keep += [row for row in starlink if row["OBJECT_ID"][:8] == newest]
     out = io.StringIO()
-    w = csv.DictWriter(out, fieldnames=list(got["stations"][0]), lineterminator="\n")
+    w = csv.DictWriter(out, fieldnames=list(keep[0]), lineterminator="\n", extrasaction="ignore")
     w.writeheader()
     w.writerows(keep)
     text = out.getvalue()
@@ -1213,22 +1348,46 @@ def fetch_balloon(session, now, balloon):
     r = session.get(SONDEHUB % (P.HOME_LAT, P.HOME_LON), timeout=20)
     r.raise_for_status()
     fresh = []
-    for f in r.json().values():
+    for f in answer_rows(r):
         try:
             when = calendar.timegm(time.strptime(f["datetime"][:19], "%Y-%m-%dT%H:%M:%S"))
-        except (KeyError, ValueError):
+            fix = (float(f["lat"]), float(f["lon"]), float(f["alt"]))
+            serial = str(f["serial"])
+        except (KeyError, TypeError, ValueError):
             continue
         if now - when < 900:
-            fresh.append((P.distance_bearing(P.HOME_LAT, P.HOME_LON, f["lat"], f["lon"])[0], when, f))
+            fresh.append((P.distance_bearing(P.HOME_LAT, P.HOME_LON, fix[0], fix[1])[0], when, fix, serial, f))
     if not fresh:
-        return balloon if balloon and now - balloon["track"][-1][0] < 1200 else None
-    _, when, f = min(fresh, key=lambda x: x[0])
-    if not balloon or balloon["serial"] != f["serial"]:
-        balloon = dict(serial=f["serial"], track=[], burst_alt=0)
+        return balloon if fresh_balloon(balloon, now) else None
+    _, when, (lat, lon, alt), serial, f = min(fresh, key=lambda x: x[0])
+    if not balloon or balloon.get("serial") != serial or not balloon.get("track"):
+        balloon = dict(serial=serial, track=[], burst_alt=0)
     if not balloon["track"] or when > balloon["track"][-1][0]:
-        balloon["track"].append([round(when), round(f["lat"], 4), round(f["lon"], 4), round(f["alt"])])
-    balloon.update(vel_v=f.get("vel_v"), temp=f.get("temp"), burst_alt=max(balloon["burst_alt"], round(f["alt"])))
+        balloon["track"].append([round(when), round(lat, 4), round(lon, 4), round(alt)])
+    vel = f.get("vel_v")
+    balloon.update(vel_v=vel if isinstance(vel, (int, float)) else None, burst_alt=max(balloon["burst_alt"], round(alt)))
     return balloon
+
+
+def answer_rows(r):
+    """The per-balloon records of a SondeHub answer, whatever shape came back: an error
+    message or a list instead of the usual {id: record} gives nothing, never a crash."""
+    data = r.json()
+    if not isinstance(data, dict):
+        return []
+    rows = []
+    for v in data.values():
+        if isinstance(v, dict) and "lat" not in v:
+            # The amateur feed nests {id: {time: record}}: the latest record
+            v = next((w for w in reversed(list(v.values())) if isinstance(w, dict)), None)
+        if isinstance(v, dict):
+            rows.append(v)
+    return rows
+
+
+def fresh_balloon(b, now):
+    """A weather balloon heard in the last 20 minutes; an older one has landed or gone."""
+    return bool(b and b.get("track") and now - b["track"][-1][0] < 1200)
 
 
 def fetch_amateur(session, now):
@@ -1237,18 +1396,27 @@ def fetch_amateur(session, now):
     r = session.get(AMATEUR % (P.HOME_LAT, P.HOME_LON), timeout=20)
     r.raise_for_status()
     near = []
-    for f in r.json().values():
-        f = f if "lat" in f else list(f.values())[-1]
+    for f in answer_rows(r):
         try:
             when = calendar.timegm(time.strptime(f["datetime"][:19], "%Y-%m-%dT%H:%M:%S"))
-            if now - when > 7200 or f["alt"] < 3000:
+            lat, lon, alt = float(f["lat"]), float(f["lon"]), float(f["alt"])
+            if now - when > 7200 or alt < 3000:
                 continue
-            near.append((P.distance_bearing(P.HOME_LAT, P.HOME_LON, f["lat"], f["lon"])[0], dict(
-                call=f.get("payload_callsign", "?"), lat=round(f["lat"], 4), lon=round(f["lon"], 4),
-                alt=round(f["alt"]), when=when, days=int(float(f["days_aloft"])) if f.get("days_aloft") else None)))
+            near.append((P.distance_bearing(P.HOME_LAT, P.HOME_LON, lat, lon)[0], dict(
+                call=str(f.get("payload_callsign") or "?"), lat=round(lat, 4), lon=round(lon, 4),
+                alt=round(alt), when=when, days=int(float(f["days_aloft"])) if f.get("days_aloft") else None)))
         except (KeyError, TypeError, ValueError):
             continue
     return min(near, key=lambda n: n[0])[1] if near else None
+
+
+def note_failure(what, e, reached, dead):
+    """Sort a failed request: no connection at all (the link may be dead), or a server that
+    answered badly, slowly or with a certificate we can't check (the link is fine)."""
+    print("%s fetch failed: %r" % (what, e), flush=True)
+    link = isinstance(e, (requests.ConnectionError, requests.ConnectTimeout)) and \
+        not isinstance(e, requests.exceptions.SSLError)
+    return (reached, dead or e) if link else (True, dead)
 
 
 def next_balloon_window(now):
@@ -1292,18 +1460,20 @@ class Frame:
         return max(self.orbits_at + ORBITS_MAX_AGE, self.orbits_tried + ORBITS_RETRY_S)
 
     def fetch(self, session, now):
-        """Orbits when a day old, the balloon around launches. A dead link raises, so the
-        loop backs off and recovers Wi-Fi; a bad answer from a server waits for next time."""
+        """Orbits when a day old, the balloons around launches and every few hours. Only when
+        nothing at all got through does it raise, so the loop backs off and recovers Wi-Fi;
+        one server down, or a bad answer, just waits for next time."""
         self.fetch_log = {}
+        reached, dead = False, None
         if now >= self.orbits_due():
+            # Before the request: a connection dropped mid-download must not mean another
+            # download straight away (CelesTrak asks for one every 2 hours at most)
+            self.orbits_tried = now
             try:
                 self.orbits, self.orbits_at = fetch_orbits(session, now), now
-                self.fetch_log["orbits"] = 1
-            except (requests.ConnectionError, requests.Timeout):
-                raise
-            except (requests.RequestException, ValueError, KeyError) as e:
-                self.orbits_tried = now
-                print("orbits fetch failed: %r" % e, flush=True)
+                self.fetch_log["orbits"] = reached = 1
+            except Exception as e:
+                reached, dead = note_failure("orbits", e, reached, dead)
         if self.balloons_due(now) <= now:
             try:
                 self.balloon = fetch_balloon(session, now, self.balloon)
@@ -1311,11 +1481,14 @@ class Frame:
                 self.fetch_log["balloon"] = int(bool(self.balloon))
                 self.amateur = fetch_amateur(session, now)
                 self.fetch_log["pico"] = int(bool(self.amateur))
-            except (requests.ConnectionError, requests.Timeout):
-                raise
-            except (requests.RequestException, ValueError, KeyError) as e:
-                print("balloon fetch failed: %r" % e, flush=True)
-            self.sondes_at = now
+                reached = True
+                self.sondes_at = now
+            except Exception as e:
+                reached, dead = note_failure("balloons", e, reached, dead)
+                if reached:
+                    self.sondes_at = now
+        if dead and not reached:
+            raise dead
         if self.args.save_sample:
             with open(self.args.save_sample, "w") as f:
                 json.dump(self.data(now), f)
@@ -1326,7 +1499,7 @@ class Frame:
     def balloons_due(self, now):
         # In a launch window, every 15 minutes until one is up; then every 5 to draw its climb,
         # every minute on a charger, where Wi-Fi is up anyway
-        if self.balloon:
+        if fresh_balloon(self.balloon, now):
             return self.sondes_at + (60 if getattr(self, "plugged", False) else P.FETCH_BUSY_S)
         if in_balloon_window(now):
             return self.sondes_at + WINDOW_CHECK_S
