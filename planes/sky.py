@@ -360,6 +360,7 @@ def star_names(d, t):
             if inside(lx, p[1], 20) and inside(lx + w, p[1], 20) and not any(
                     box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in TAKEN):
                 glow_text(d, (lx, p[1] - h * 0.6), name, SMALL, SOFT, GROUND)
+                named(name, STAR_LY.get(name, 100) * KM_PER_LY, "star")
                 TAKEN.append(box)
                 placed += 1
                 break
@@ -382,6 +383,13 @@ def glow_text(d, xy, s, f, fill, bg):
 
 
 TAKEN = []
+# Everything the dome has put a name to, as (name, km, kind): the list in the panel is its key
+NAMED = []
+
+
+def named(name, km, kind):
+    if name not in (n for n, _, _ in NAMED):
+        NAMED.append((name, km, kind))
 
 
 def side_label(d, x, y, off, s, f, fill, bg, dy=0):
@@ -490,6 +498,7 @@ def draw_dome(img, d, sky):
 
     things = sky["things"]
     del TAKEN[:]
+    del NAMED[:]
     # Compass letters on the horizon, in a gap cut in the line, like a compass bezel. First,
     # so the sky draws over them (the Moon rising in the east beats the E), and taken, so
     # no label lands on one
@@ -591,6 +600,7 @@ def draw_dome(img, d, sky):
         lx, ly = min(spots, key=cost)
         TAKEN.append((lx - 4, ly - 2, lx + w + 4, ly + h * 1.2))
         glow_text(d, (lx, ly), lab, SMALL, SOFT, GROUND)
+        named(th["name"], th["km"], th["kind"])
 
     for th in [th for th in things if not th.get("below")]:
         x, y = dome_xy(th["el"], th["az"])
@@ -599,15 +609,21 @@ def draw_dome(img, d, sky):
             near = [p["name"] for p in things if p["kind"] == "planet" and not p.get("below")
                     and math.hypot(*(a - b for a, b in zip(dome_xy(p["el"], p["az"]), (x, y)))) < 100]
             side_label(d, x, y, 44, " & ".join(["Moon"] + near), LABEL, lit("moon"), dome, dy=-30)
+            named("Moon", th["km"], "moon")
+            for p in things:
+                if p["name"] in near:
+                    named(p["name"], p["km"], "planet")
         elif th["kind"] == "planet":
             # Ringed for the giants, a sparkle for Venus, a plain dot for Mars
             icon = {"Venus": ("sparkle", 34), "Mars": ("dot", 16)}.get(th["name"], ("planet", 38))
             icons.paste(img, icons.glyph(icon[0], icon[1], ink), x, y, dome)
             if not moon_near(things, x, y):
                 side_label(d, x, y, 24, th["name"], LABEL, ink, dome, dy=4)
+                named(th["name"], th["km"], "planet")
         elif th["kind"] == "sun":
             icons.paste(img, icons.glyph("sun", 68, ink), x, y, dome)
             side_label(d, x, y, 46, "Sun", LABEL, ink, dome)
+            named("Sun", th["km"], "sun")
 
     tr = sky.get("train")
     if tr:
@@ -618,11 +634,15 @@ def draw_dome(img, d, sky):
             icons.paste(img, icons.glyph("satellite", 30, lit("train")), x, y, dome)
         at = min(beads, key=lambda b: b[1]) if beads else path[len(path) // 2]
         side_label(d, at[0], at[1], 26, "Starlink", BLABEL, lit("train"), dome)
+        cars = [th["km"] for th in things if th["kind"] == "train"]
+        if cars:
+            named("Starlink", min(cars), "train")
 
     for pb in (th for th in things if th["kind"] == "pico"):
         x, y = dome_xy(max(pb["el"], 5), pb["az"])
         draw_balloon(img, x, y, 48, lit("pico"), dome)
         side_label(d, x, y, 32, pb["name"], BLABEL, lit("pico"), dome)
+        named(pb["name"], pb["km"], "pico")
 
     b = next((th for th in things if th["kind"] == "balloon"), None)
     if b:
@@ -630,6 +650,7 @@ def draw_dome(img, d, sky):
         x, y = dome_xy(max(b["el"], 5), b["az"])
         draw_balloon(img, x, y, 56, lit("balloon"), dome, burst=not b["rising"])
         side_label(d, x, y, 36, "Balloon", BLABEL, lit("balloon"), dome)
+        named("Balloon", b["km"], "balloon")
 
     for th in things:
         if th["kind"] == "station":
@@ -638,6 +659,7 @@ def draw_dome(img, d, sky):
             icon = icons.glyph("satellite", 70, level)
             icons.paste(img, icon, x, y, dome)
             side_label(d, x, y - 4, icon[0].width // 2 + 10, th["name"], BLABEL, level, dome)
+            named(th["name"], th["km"], "station")
 
     if limit:
         star_names(d, sky["t"])
@@ -912,22 +934,11 @@ SONDE_SITES = (("Buffalo", 42.94, -78.72), ("Detroit", 42.70, -83.47), ("Albany"
                ("Maniwaki", 46.30, -76.01), ("Pittsburgh", 40.53, -80.22))
 
 
-def ladder_items(sky):
-    items, things = [], sky["things"]
-    for kind in ("balloon", "pico", "station", "train", "moon", "sun", "planet"):
-        for th in sorted((th for th in things if th["kind"] == kind and not th.get("below")), key=lambda th: th["km"])[:1]:
-            items.append((th["name"], th["km"], kind))
-    if mag_limit(sky["sun_el"]):
-        # The farthest thing you can see tonight: the named star closest to the zenith
-        best = max(SKY["names"], key=lambda s: astro.alt_az(s[0], s[1], sky["t"], P.HOME_LAT, P.HOME_LON)[0])
-        items.append((best[2], STAR_LY.get(best[2], 100) * KM_PER_LY, "star"))
-    return sorted(items, key=lambda i: i[1])
-
-
-# Distances of the named stars, light-years (for the ladder's top rung)
+# Distances of the named stars, light-years, for the list in the panel
 STAR_LY = {"Vega": 25, "Deneb": 2600, "Altair": 17, "Arcturus": 37, "Capella": 43, "Aldebaran": 65,
            "Polaris": 430, "Betelgeuse": 550, "Rigel": 860, "Sirius": 8.6, "Procyon": 11.5,
-           "Pollux": 34, "Castor": 51, "Regulus": 79, "Spica": 250, "Antares": 550, "Fomalhaut": 25}
+           "Pollux": 34, "Castor": 51, "Regulus": 79, "Spica": 250, "Antares": 550, "Fomalhaut": 25,
+           "Canopus": 310, "Achernar": 139, "Acrux": 320, "Hadar": 390, "Rigil Kentaurus": 4.4}
 
 
 def wind_turn(pts):
@@ -1081,16 +1092,15 @@ def draw_panel(d, sky):
         draw_year(d, sky, x0, y + 20, width, bottom)
         return
 
-    # How far, farthest first: the order says it, so no scale and no leader lines
-    items = ladder_items(sky)
-    top, gap = y + 30, 64
-    room = int((bottom - 10 - top) / gap)
-    if room < 1:
+    # How far away each thing named on the dome is, farthest first: a key to the dome, so
+    # everything on one is on the other. Only in quiet moments: while something worth going
+    # out for is on or coming within the hour, the panel stays on it. And whole or not at all
+    if "wonder" in h and score(h, sky["t"]) >= 3:
         return
-    if len(items) > room:
-        # The farthest thing and the Moon matter most
-        order = ("star", "moon", "station", "balloon", "pico", "train", "planet", "sun")
-        items = sorted(sorted(items, key=lambda i: order.index(i[2]))[:room], key=lambda i: i[1])
+    items = sorted(NAMED, key=lambda i: i[1])
+    top, gap = y + 30, 64
+    if not items or len(items) > int((bottom - 10 - top) / gap):
+        return
     # A rail with a stop for each, like a transit line: each dot level with its own name
     rail, lx = x0 + 12, x0 + 44
     mid = RUNG.size * 0.62
