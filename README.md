@@ -2,12 +2,14 @@
 
 A Kindle in a picture frame that shows the planes flying overhead.
 
-<img alt="A light wood picture frame on a kitchen counter. The e-ink screen inside cycles through the planes overhead: Dublin to Toronto, Toronto to Dallas-Fort Worth, Calgary to Toronto, London to Toronto, then Hong Kong to Toronto descending over the lake, each with its height, speed and a small map" src="docs/images/hero.gif" width="820">
+<img alt="A light wood picture frame on a kitchen counter. The e-ink screen inside follows Cathay Pacific 826 from Hong Kong as it descends over the lake to land in Toronto, then flashes over to a WestJet flight to Halifax and an Air Canada Rouge flight from Frankfurt, each with its height, speed and a small map" src="docs/images/hero.gif" width="820">
 
 A jailbroken Kindle Paperwhite fetches live flight positions, picks the plane closest to
 home, and shows where it's flying from and to, how high and fast it's going, and how far
 along its trip it is. The screen updates every minute and a charge lasts about five days.
 At night it draws the whole day's traffic as one picture.
+
+<img alt="The frame showing Hong Kong to Toronto at 4,100 feet, the plane right over the city" src="docs/images/frame-overhead.jpg" width="270"> <img alt="The frame showing Hong Kong to Toronto at 900 feet, the trip marked Landing" src="docs/images/frame-landing.jpg" width="270"> <img alt="The frame showing Frankfurt am Main to Sault Ste. Marie at 41,000 feet, 8 hours 29 minutes flown" src="docs/images/frame-frankfurt.jpg" width="270">
 
 Everything runs on the Kindle. Your computer is only needed to install it.
 
