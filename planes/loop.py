@@ -101,6 +101,18 @@ def battery_low(was_low):
     return cap <= (LOW_BATTERY_RESUME if was_low else LOW_BATTERY)
 
 
+def set_hold(on):
+    """The HOLD file keeps the Kindle awake with Wi-Fi up. It lives in /mnt/us, which a
+    computer's USB takes away (Drive Mode), so a failed write is skipped, never fatal."""
+    try:
+        if on:
+            open(power.HOLD, "w").close()
+        elif os.path.exists(power.HOLD):
+            os.remove(power.HOLD)
+    except OSError:
+        pass
+
+
 def run(frame, args):
     cfg = frame.configure(args)
     power.set_governor(cfg["power"].get("governor"))
@@ -121,13 +133,21 @@ def run(frame, args):
         restyled, last_style = last_style != cfg["style"], cfg["style"]
         now = time.time()
         plugged = frame.plugged = power.on_ac()
-        if pw.get("wifi_toggle") and plugged != was_plugged:
-            # Onto a charger: Wi-Fi up and staying up. Off it: back to Wi-Fi only for fetches
+        if pw.get("wifi_toggle") and (plugged or plugged != was_plugged):
+            # On a charger: Wi-Fi up and kept up (brought back if it drops). Off it: back to
+            # Wi-Fi only for fetches
             if plugged:
                 power.wifi_up()
             else:
                 power.wifi_down()
         was_plugged = plugged
+        # A power-button hold ends after its 10 minutes, or as soon as HOLD is gone, here at
+        # the top so it also ends at night; Wi-Fi goes down with it, never left up into suspend
+        if hold_until and (time.time() > hold_until or not os.path.exists(power.HOLD)):
+            set_hold(False)
+            hold_until = 0
+            if pw.get("wifi_toggle") and not plugged:
+                power.wifi_down()
 
         low = not args.once and battery_low(low)
         if not args.once and (frame.in_night(now) or low):
@@ -145,8 +165,9 @@ def run(frame, args):
             if pw.get("wifi_toggle") and not plugged:
                 power.wifi_down()
             suspend = pw.get("suspend", False) and time.time() - started > 60 and not plugged
-            woke = power.sleep_until(now + NIGHT_WAKE_S if low else min(now + NIGHT_WAKE_S, frame.next_morning(now)),
-                                     suspend=suspend)
+            # On a charger, look again every minute, so unplugging is noticed
+            until = now + NIGHT_WAKE_S if low else min(now + NIGHT_WAKE_S, frame.next_morning(now))
+            woke = power.sleep_until(min(until, now + 60) if plugged else until, suspend=suspend)
             power.log("wake", how=woke, night=1)
             next_fetch = 0  # fetch straight away when morning comes
             last_full = 0
@@ -161,6 +182,7 @@ def run(frame, args):
             if failures and failures % 12 == 0:
                 power.restart_wifid()
             took = power.wifi_up(reset=failures >= 3 and failures % 3 == 0) if pw.get("wifi_toggle") else 0.0
+            odd = False
             try:
                 # wifid reports CONNECTED a moment before the link carries traffic; retry
                 # inside this wake rather than paying for another Wi-Fi join next minute
@@ -176,13 +198,20 @@ def run(frame, args):
             except (requests.RequestException, ValueError) as e:
                 failures += 1
                 print("fetch failed (%d): %r" % (failures, e), file=sys.stderr, flush=True)
+            except Exception:
+                # A server answered with something nobody expected: a bad answer, not a dead
+                # link, so no Wi-Fi recovery, and try again in a while rather than at once
+                odd = True
+                traceback.print_exc()
             if pw.get("wifi_toggle") and not plugged:
                 power.wifi_down()
-            if failures:
+            if odd:
+                next_fetch = now + 900
+            elif failures:
                 next_fetch = now + min(60 * failures, MAX_BACKOFF_S)
             else:
                 next_fetch = now + frame.fetch_every(now)
-            power.log("fetch", ok=int(not failures), wifi_s="%.1f" % (took or -1),
+            power.log("fetch", ok=int(not failures and not odd), wifi_s="%.1f" % (took or -1),
                       awake_s="%.1f" % (time.time() - woke), **frame.fetch_log)
 
         # Suspend switches the frontlight off, so a steady glow is only possible awake:
@@ -217,18 +246,14 @@ def run(frame, args):
             # A second press while held means leave: hand the screen back to the Kindle
             # UI until the next reboot. The gap keeps a quick double tap from exiting.
             power.log("button_exit")
-            if os.path.exists(power.HOLD):
-                os.remove(power.HOLD)
+            set_hold(False)
             subprocess.call(["sh", os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.sh"), "stop"])
             return
         if woke == "button":
             # A power-button press means someone wants in: hold awake with Wi-Fi for 10 minutes
-            open(power.HOLD, "w").close()
+            set_hold(True)
             hold_started = time.time()
             hold_until = hold_started + 600
             power.wifi_up()
             power.log("button_hold")
-        if hold_until and time.time() > hold_until and os.path.exists(power.HOLD):
-            os.remove(power.HOLD)
-            hold_until = 0
         power.log("wake", how=woke)

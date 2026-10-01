@@ -62,7 +62,33 @@ sleep 3
 cd "$DIR"
 FRAME=$(sed -n 's/.*"frame": *"\([a-z]*\)".*/\1/p' config.json)
 case "$FRAME" in sky) ;; *) FRAME=planes ;; esac
-# Toronto unless config.json sets "tz"
-TZ="EST5EDT,M3.2.0,M11.1.0" SSL_CERT_FILE="$DIR/cacert.pem" REQUESTS_CA_BUNDLE="$DIR/cacert.pem" \
-    nohup "$PY" "$FRAME.py" "$@" >/tmp/planes.log 2>&1 &
+rm -f /tmp/planes.stopped
+: >/tmp/planes.log
+# Supervised: if the frame ever exits on an error nothing caught, start it again, waiting
+# longer each time it fails quickly so a broken build doesn't spin. `run.sh stop`, or a kill
+# of this loop's pid (deploy.sh, grid.sh), ends the loop and takes the frame with it
+(
+    trap '' HUP
+    trap 'kill $child 2>/dev/null; exit 0' TERM INT
+    delay=30
+    while :; do
+        began=$(date +%s)
+        # Toronto unless config.json sets "tz"
+        TZ="EST5EDT,M3.2.0,M11.1.0" SSL_CERT_FILE="$DIR/cacert.pem" REQUESTS_CA_BUNDLE="$DIR/cacert.pem" \
+            "$PY" "$FRAME.py" "$@" &
+        child=$!
+        wait $child
+        code=$?
+        [ -f /tmp/planes.stopped ] && exit 0
+        [ $(( $(date +%s) - began )) -gt 600 ] && delay=30
+        echo "$(date) $FRAME.py exited ($code), restarting in $delay s"
+        # Waited on, not run in the foreground, so a stop doesn't sit out the sleep
+        sleep $delay &
+        child=$!
+        wait $child
+        delay=$(( delay * 2 > 900 ? 900 : delay * 2 ))
+    done
+# Its own output to the log too: the shell reports a killed frame ("Terminated"), and
+# written to the SSH session that started it, long closed, that report would kill the loop
+) </dev/null >>/tmp/planes.log 2>&1 &
 echo $! >"$PIDFILE"
