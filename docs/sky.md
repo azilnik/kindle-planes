@@ -18,7 +18,8 @@ that way, and your left is on the left. It's white on black, day and night.
   shows where the wind turns, and **pico balloons**, the small ham-radio balloons that
   float for weeks and sometimes circle the world
 - **The Moon** in its phase, and **Venus, Mars, Jupiter and Saturn**
-- **Meteor showers** on their peak nights
+- **Meteor showers** on their peak nights, at the rate you'd really see from home, with
+  the radiant (where the streaks come from) on the dome
 - After dark, the brighter stars
 
 ## What leads
@@ -28,9 +29,9 @@ time and a wonder from 1 to 5:
 
 | Wonder | Events |
 |---|---|
-| 4 | An ISS pass 60° up or more, a Starlink train, the Perseids, Geminids and Quadrantids, a pico balloon that's been up a week |
-| 3 | An ISS pass 25° to 60° up, a Tiangong pass 60° up, a weather or pico balloon in the sky, the full moon, the Eta Aquariids, the midnight sun and polar night |
-| 2 | Lower passes, the Moon up at night, daylight, the smaller showers |
+| 4 | An ISS pass 60° up or more, a Starlink train, a meteor shower you'd see 20 an hour of, a pico balloon that's been up a week |
+| 3 | An ISS pass 25° to 60° up, a Tiangong pass 60° up, a weather or pico balloon in the sky, the full moon, a shower of 10 to 20 an hour, the midnight sun and polar night |
+| 2 | Lower passes, the Moon up at night, daylight, a shower of 5 to 10 an hour (on the Next line only) |
 | 1 | Sunrise, the Moon low in the haze under 10° |
 
 Ties go to what you can see: a station, then a train or a shower, then the Moon and Sun,
@@ -55,7 +56,18 @@ first. It only shows in quiet moments, when the headline is the Sun, the Moon or
 in particular.
 
 The frame never complains. Shorter days are told as the time the stars come out, and a
-meteor shower washed out by the Moon steps back instead of saying so.
+meteor shower washed out by the Moon or the city's glow steps back instead of saying so.
+
+## Meteor showers, from here
+
+A shower's published rate is for a perfectly dark sky with its radiant straight overhead.
+The frame works out what you'd really see, with the International Meteor Organization's
+formula: the rate, times how high the radiant gets, cut by how bright the sky is (set by
+`sky_glow` in `config.json`, a city by default, and lowered further while the Moon is up).
+It takes the best hour of the night before dawn. From a city that leaves the Geminids,
+Perseids and Quadrantids at 10 to 20 an hour, and the smaller showers at 2 to 4, which
+never show. On a shower night the Kindle checks the cloud forecast; if the night will be
+mostly cloudy, the shower quietly isn't mentioned.
 
 ## Turn it on
 
@@ -73,9 +85,11 @@ display.
 - Balloons: [SondeHub](https://sondehub.org). In the hours after the weather balloon
   launches at 00:00 and 12:00 UTC, every 15 minutes until one is up, then every 5 to draw
   its climb (every minute on a charger). Otherwise every 3 hours, for off-schedule flights and pico balloons.
+- Cloud cover: [Open-Meteo](https://open-meteo.com), only on meteor shower nights (from
+  the morning before, every 6 hours), a few times a year.
 - The Sun, Moon, planets, stars and meteor showers are worked out on the Kindle, with no
-  network. So Wi-Fi goes on only when orbits or balloons are due, and in between the sky
-  just redraws every 10 minutes, or every minute while something crosses.
+  network. So Wi-Fi goes on only when orbits, balloons or clouds are due, and in between
+  the sky just redraws every 10 minutes, or every minute while something crosses.
   Satellite positions use [sgp4](https://pypi.org/project/sgp4/), and the star catalog
   comes from [d3-celestial](https://github.com/ofrohn/d3-celestial).
 

@@ -115,7 +115,7 @@ def kept(key, t, version, max_age, make, ends=None):
 
 def build(data, t):
     lat, lon = P.HOME_LAT, P.HOME_LON
-    sky = {"t": t, "sun_el": astro.sun_alt(t, lat, lon), "things": []}
+    sky = {"t": t, "sun_el": astro.sun_alt(t, lat, lon), "things": [], "clouds": data.get("clouds")}
     add = sky["things"].append
 
     # Nothing old shown as live: a weather balloon that's down (fresh_balloon), a pico unheard
@@ -593,6 +593,13 @@ def draw_dome(img, d, sky):
             continue
         r = {"moon": 36, "station": 40, "sun": 36, "train": 18, "planet": 18}.get(th["kind"], 10)
         marks.append((x - r, y - r, x + r, y + r))
+    # A meteor shower's radiant, where the streaks seem to come from, once it's dark enough
+    radiant = None
+    if hero.get("radiant") and sky["sun_el"] < -6:
+        el, az = astro.alt_az(hero["radiant"][0], hero["radiant"][1], t, P.HOME_LAT, P.HOME_LON)
+        if el > 0:
+            radiant = dome_xy(el, az)
+            marks.append((radiant[0] - 30, radiant[1] - 30, radiant[0] + 30, radiant[1] + 30))
     MARKS.extend(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in marks)
     # You: no label covers the dot, though one may sit nearer it than its own mark (nobody
     # reads a name as yours)
@@ -674,6 +681,15 @@ def draw_dome(img, d, sky):
     # You, under the middle of the sky, as a map marks you: a dot, on top of the cone
     d.ellipse((DOME_X - 19, DOME_Y - 19, DOME_X + 19, DOME_Y + 19), fill=GROUND)
     d.ellipse((DOME_X - 13, DOME_Y - 13, DOME_X + 13, DOME_Y + 13), fill=THING)
+
+    if radiant:
+        x, y = radiant
+        fill = HERO if hk == "shower" else THING
+        for k in range(8):
+            a = math.radians(k * 45 + 22.5)
+            d.line((x + 12 * math.cos(a), y + 12 * math.sin(a), x + 30 * math.cos(a), y + 30 * math.sin(a)),
+                   fill=fill, width=5)
+        labels.append((True, x, y, 36, hero["head"], BLABEL, fill, 0, []))
 
     # A Moon about to rise, waiting at the rim where it will come up, with when
     if ghost:
@@ -875,9 +891,17 @@ def along(start, end, t):
 LEAD_H = {1: 0.5, 2: 2, 3: 6, 4: 24, 5: 24 * 7}
 NEXT_DAYS = 7          # for everything; past a week only for what comes once a year or less,
 YEARLY_DAYS = 30       # and not so far off that it says the same thing all season
-# Peak nights of the showers worth a look, with their usual rates an hour under a dark sky
-SHOWERS = (("Quadrantids", 1, 3, 80), ("Lyrids", 4, 22, 18), ("Eta Aquariids", 5, 5, 50),
-           ("Perseids", 8, 12, 100), ("Orionids", 10, 21, 20), ("Leonids", 11, 17, 15), ("Geminids", 12, 13, 150))
+# The major showers' peak nights, from the International Meteor Organization: the rate an
+# hour under a perfectly dark sky with the radiant overhead (ZHR), the population index r
+# (how fast the count falls as the sky brightens) and the radiant, RA and Dec
+SHOWERS = (("Quadrantids", 1, 3, 80, 2.1, 230, 49), ("Lyrids", 4, 22, 18, 2.1, 271, 34),
+           ("Eta Aquariids", 5, 5, 50, 2.4, 338, -1), ("Perseids", 8, 12, 100, 2.2, 48, 58),
+           ("Orionids", 10, 21, 20, 2.5, 95, 16), ("Leonids", 11, 17, 15, 2.5, 152, 22),
+           ("Geminids", 12, 13, 150, 2.6, 112, 33))
+# Config "sky_glow": how faint a star you can see overhead (limiting magnitude). There's
+# no telling a city from a field on the device, so it's set; a city sky by default
+SKY_GLOW = {"dark": 6.5, "rural": 6.0, "suburb": 5.5, "city": 4.5, "downtown": 4.0}
+CLOUDY = 70  # percent cloud over a shower night that hides it
 
 
 def score(ev, t):
@@ -932,27 +956,45 @@ def path(rise_az, set_az, frac):
     return (P.compass(rise_az), P.compass(set_az), frac, rise_az, set_az)
 
 
-def shower_events(t, lat, lon):
-    """This year's and next year's peak nights, 10 pm to 5 am, with the Moon's say in it."""
+def shower_events(t, lat, lon, limit):
+    """This year's and next year's peak nights, 10 pm to 5 am, with what you'd really see
+    from here: the IMO's rate, ZHR x sin(radiant height) x r^(limit - 6.5), at the best
+    hour, the limit lowered by the Moon while it's up. Under 5 an hour isn't worth going out
+    for and isn't shown; under 10 only on the Next line."""
     out = []
     year = time.localtime(t).tm_year
-    for name, m, d, rate in SHOWERS:
+    for name, m, d, zhr, r, ra, dec in SHOWERS:
         for y in (year, year + 1):
             start = time.mktime((y, m, d, 22, 0, 0, 0, 0, -1))
-            frac = astro.moon(start)[3]
-            wonder = 4 if rate >= 80 else (3 if rate >= 50 else 2)
-            if frac < 0.6:
-                moon_stat = ("%d%%" % round(frac * 100), "MOON LIT")
-            else:
-                # A bright Moon washes the shower out: say when it sets, and don't lead with it
-                moonset = crossing(lambda tt: astro.moon_alt_az(tt, lat, lon)[0], start, rising=False, span=7 * 3600)
-                moon_stat = (clock(moonset), "MOON SETS") if moonset else None
-                wonder = max(2, wonder - 1)
-            out.append(dict(kind="shower", wonder=wonder,
-                            start=start, end=start + 7 * 3600, head=name,
-                            stats=[("%d" % rate, "AN HOUR")] + ([moon_stat] if moon_stat else []),
+            best = (0, start)
+            for tt in range(int(start), int(start) + 7 * 3600 + 1, 1800):
+                h = astro.alt_az(ra, dec, tt, lat, lon)[0]
+                if h <= 0 or astro.sun_alt(tt, lat, lon) > -12:
+                    continue  # radiant down, or dawn already washing the sky out
+                ma, _, _, frac, _ = astro.moon_alt_az(tt, lat, lon)
+                seen = limit - (0.8 * frac if ma > 0 else 0)
+                best = max(best, (zhr * math.sin(math.radians(h)) * r ** (seen - 6.5), tt))
+            rate, at = best
+            if rate < 5:
+                continue
+            out.append(dict(kind="shower", wonder=4 if rate >= 20 else 3 if rate >= 10 else 2, next_only=rate < 10,
+                            start=start, end=start + 7 * 3600, head=name, best=at, radiant=(ra, dec),
+                            rate="%d" % (rate if rate < 10 else 5 * round(rate / 5.0)),
                             next=(name, start, False), yearly=True))
     return out
+
+
+def shower_list(t):
+    lat, lon = P.HOME_LAT, P.HOME_LON
+    limit = SKY_GLOW.get((P.LAST_CFG or {}).get("sky_glow"), SKY_GLOW["city"])
+    return kept("showers", t, (time.localtime(t).tm_year, limit, lat, lon), 86400,
+                lambda: shower_events(t, lat, lon, limit))
+
+
+def clouded(ev, clouds):
+    """True when the forecast has the shower's night mostly cloudy."""
+    hours = [pct for when, pct in (clouds or {}).get("hours", []) if ev["start"] <= when < ev["end"]]
+    return len(hours) >= 3 and sum(hours) / len(hours) >= CLOUDY
 
 
 def next_full_moon(t):
@@ -1048,9 +1090,19 @@ def events(sky):
     if fm and fm > t + 86400:
         evs.append(dict(kind="moon", wonder=3, start=fm, end=fm + 6 * 3600, head="Full moon", stats=[],
                         next=("Full moon", fm, False), next_only=True))
-    # Kept for the day; the foot is worked out now, so it never says tomorrow night on the night
-    evs += [dict(ev, foot="Best after midnight" if t >= ev["start"] else night_word(ev["start"], t).capitalize())
-            for ev in kept("showers", t, time.localtime(t).tm_year, 86400, lambda: shower_events(t, lat, lon))]
+    # Kept for the day; the words for when are worked out now, so they're never a day stale.
+    # A night the forecast has under cloud just isn't mentioned
+    for ev in shower_list(t):
+        if clouded(ev, sky.get("clouds")):
+            continue
+        # Where the streaks come from: now, while it's up in the dark, else at the best hour
+        el, az = astro.alt_az(ev["radiant"][0], ev["radiant"][1], t, lat, lon)
+        if el <= 0 or sky["sun_el"] > -6:
+            el, az = astro.alt_az(ev["radiant"][0], ev["radiant"][1], ev["best"], lat, lon)
+        evs.append(dict(ev, stats=[(ev["rate"], "AN\u00a0HOUR FROM\u00a0HERE"),
+                                   (clock(ev["best"]), day_word(ev["best"], t)) if t < ev["best"] else
+                                   (clock(ev["end"]), "GONE BY")],
+                        foot="Streaking from overhead" if el >= 75 else "Streaking out of the " + P.compass(az)))
     return evs
 
 
@@ -1341,6 +1393,10 @@ BALLOON_WINDOWS = ((10.75, 14.0), (22.75, 26.0))
 SONDE_CHECK_S = 3 * 3600
 WINDOW_CHECK_S = 900
 PICO_CHECK_S = 1800
+# Cloud cover for a shower night, to a tenth of a degree (the forecast's grid is coarser)
+OPEN_METEO = ("https://api.open-meteo.com/v1/forecast?latitude=%.1f&longitude=%.1f"
+              "&hourly=cloud_cover&forecast_days=2&timezone=GMT")
+CLOUD_CHECK_S = 6 * 3600
 AMATEUR = "https://api.v2.sondehub.org/amateur?lat=%.4f&lon=%.4f&distance=250000&last=7200"
 
 
@@ -1460,6 +1516,18 @@ def fetch_amateur(session, now):
     return min(near, key=lambda n: n[0])[1] if near else None
 
 
+def fetch_clouds(session, now):
+    """Hourly cloud cover for the next two days, as [[epoch, percent]]."""
+    r = session.get(OPEN_METEO % (P.HOME_LAT, P.HOME_LON), timeout=20)
+    r.raise_for_status()
+    hourly = r.json()["hourly"]
+    hours = []
+    for when, pct in zip(hourly["time"], hourly["cloud_cover"]):
+        if isinstance(pct, (int, float)):
+            hours.append([calendar.timegm(time.strptime(when, "%Y-%m-%dT%H:%M")), pct])
+    return {"at": now, "hours": hours}
+
+
 def note_failure(what, e, reached, dead):
     """Sort a failed request: no connection at all (the link may be dead), or a server that
     answered badly, slowly or with a certificate we can't check (the link is fine)."""
@@ -1496,6 +1564,7 @@ class Frame:
             self.orbits, self.orbits_at = "", 0
         self.orbits_tried = 0
         self.sondes_at, self.amateur = 0, None
+        self.clouds, self.clouds_tried = None, 0
         try:
             with open(BALLOON_PATH) as f:
                 self.balloon = json.load(f)
@@ -1538,6 +1607,13 @@ class Frame:
                 reached, dead = note_failure("balloons", e, reached, dead)
                 if reached:
                     self.sondes_at = now
+        if self.clouds_due(now) <= now:
+            self.clouds_tried = now
+            try:
+                self.clouds = fetch_clouds(session, now)
+                self.fetch_log["clouds"] = reached = 1
+            except Exception as e:
+                reached, dead = note_failure("clouds", e, reached, dead)
         if dead and not reached:
             raise dead
         if self.args.save_sample:
@@ -1545,7 +1621,20 @@ class Frame:
                 json.dump(self.data(now), f)
 
     def data(self, now):
-        return {"time": now, "orbits": self.orbits, "balloon": self.balloon, "amateur": self.amateur}
+        return {"time": now, "orbits": self.orbits, "balloon": self.balloon, "amateur": self.amateur,
+                "clouds": self.clouds}
+
+    def clouds_due(self, now):
+        """The forecast for a shower night, from the morning before to its end, every 6
+        hours: a few fetches a year. Never when no shower worth showing is near."""
+        due = []
+        for ev in shower_list(now):
+            opens = ev["start"] - 12 * 3600
+            if opens <= now < ev["end"]:
+                due.append(max(opens, self.clouds_tried + CLOUD_CHECK_S))
+            elif now < opens:
+                due.append(opens)
+        return min(due) if due else now + 86400
 
     def balloons_due(self, now):
         # In a launch window, every 15 minutes until one is up; then every 5 to draw its climb,
@@ -1557,7 +1646,7 @@ class Frame:
         return min(next_balloon_window(now), self.sondes_at + (PICO_CHECK_S if self.amateur else SONDE_CHECK_S))
 
     def next_due(self, now):
-        return min(self.orbits_due(), self.balloons_due(now))
+        return min(self.orbits_due(), self.balloons_due(now), self.clouds_due(now))
 
     def fetch_every(self, now):
         return max(60, self.next_due(now) - now)

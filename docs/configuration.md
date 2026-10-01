@@ -20,6 +20,7 @@ and logs the error in `/tmp/planes.log`.
 | `frame` | `planes`, or `sky` for the whole sky. See [sky.md](sky.md) | `"planes"` |
 | `style` | For the planes frame: `bold-right`, `bold` (mirrored), `bold-traffic` (adds today's chart) or `detailed` (smaller text, more labels) | `bold-right` |
 | `heading` | The compass direction you face when looking at the frame. The map and the sky both turn so it points up | `0` (north up) |
+| `sky_glow` | For the sky frame: how dark your sky is, for the meteor shower rates. `dark`, `rural`, `suburb`, `city` or `downtown` | `"city"` |
 | `rotate` | How the Kindle sits in the frame: `270` with its logo on the left, `90` on the right | `270` |
 | `safe` | The part of the screen the frame's mat leaves visible, as `[left, top, right, bottom]` in pixels. See [frame.md](frame.md) | Fits the 13×18 insert |
 | `inset` | How far text stays inside `safe`, in pixels. 12 is 1 mm | `12`. The Paperwhite 4 config uses `0`, because its `safe` already leaves a margin |
