@@ -100,6 +100,11 @@ Design it on the panel, through the webcam (`tools/camshot.sh`) as well as `fbsh
 e-ink black is a dark gray, so grays below about 150 vanish, and anything under 34 px is
 unreadable from across a room.
 
+After changing `loop.py` or when the sky frame redraws, run `tools/simulate.py`: the real
+loop and frame on a fake clock, panel and SondeHub, through a balloon flight, passes,
+unplugging, a clock set back and a failed render, with checks on every screen update and
+flash. Nothing touches the network or a Kindle.
+
 The sky frame's pure-Python work (sgp4 pass searches, rise and set times, the star field)
 is cached between frames by `kept()`; the first frame after a start costs the most.
 `planes/vendor/sgp4` is upstream sgp4 2.27 (its pure-Python modules and `omm.py`),
