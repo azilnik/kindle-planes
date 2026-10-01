@@ -454,6 +454,13 @@ def claim_path(pts, half):
             TAKEN.append((x - half, y - half, x + half, y + half))
 
 
+def on_ground(th):
+    """True when something below the horizon falls inside the frame, so it's drawn there
+    with its rise time."""
+    x, y = dome_xy(th["el"], th["az"])
+    return SKY_BOX[0] + 30 < x < SKY_BOX[2] - 30 and SKY_BOX[1] + 30 < y < SKY_BOX[3] - 30
+
+
 def compass_boxes(d):
     """Where N, E, S and W go, just outside the horizon, as boxes for labels to keep clear of."""
     boxes = []
@@ -558,14 +565,16 @@ def draw_dome(img, d, sky):
     # Things below the horizon, ghosted on the ground outside it
     for th in [th for th in things if th.get("below") and th["kind"] == "moon"]:
         x, y = dome_xy(th["el"], th["az"])
-        if not (SKY_BOX[0] + 30 < x < SKY_BOX[2] - 30 and SKY_BOX[1] + 30 < y < SKY_BOX[3] - 30):
+        if not on_ground(th):
             continue
         if th["kind"] == "moon":
             icons.paste(img, moon_icon(26, th["frac"], th["waxing"], x, y, sun_xy, True, ghost), x, y, dome)
         else:
             rr = 18 if th["kind"] == "sun" else 8
             d.ellipse((x - rr, y - rr, x + rr, y + rr), outline=ghost, width=5)
-        lab = th["name"] + (" rises " + clock(th["rises"]) if th.get("rises") else "")
+        # The rise time, unless the headline is this very rise and already says it
+        said = sky["hero"]["kind"] == th["kind"] and sky["hero"].get("start") == th.get("rises")
+        lab = th["name"] + (" rises " + clock(th["rises"]) if th.get("rises") and not said else "")
         w, h = P.text_w(d, lab, SMALL), SMALL.size
         # Below, above, right or left of it: the first spot clear of the compass letters,
         # and outside the dome, where the ground is
@@ -860,7 +869,9 @@ def events(sky):
             evs.append(dict(kind="moon", wonder=3 if full else 2, start=moon["rises"], end=moon["rises"] + 6 * 3600,
                             head=phase, stats=[(clock(moon["rises"]), day_word(moon["rises"], t)),
                                                ("%d%%" % round(moon["frac"] * 100), "LIT")],
-                            foot="Rises in the " + P.compass(az), next=("Moon rises", moon["rises"], True)))
+                            foot="Rises in the " + P.compass(az),
+                            # The dome already says it when the Moon is drawn below the horizon
+                            next=None if on_ground(moon) else ("Moon rises", moon["rises"], True)))
     fm = kept("fullmoon", t, None, 6 * 3600, lambda: next_full_moon(t + 86400), ends=lambda when: when)
     if fm and fm > t + 86400:
         evs.append(dict(kind="moon", wonder=3, start=fm, end=fm + 6 * 3600, head="Full moon", stats=[],
