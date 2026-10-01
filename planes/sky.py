@@ -1324,9 +1324,10 @@ class Frame:
         return {"time": now, "orbits": self.orbits, "balloon": self.balloon, "amateur": self.amateur}
 
     def balloons_due(self, now):
-        # In a launch window, every 15 minutes until one is up; then every 5 to draw its climb
+        # In a launch window, every 15 minutes until one is up; then every 5 to draw its climb,
+        # every minute on a charger, where Wi-Fi is up anyway
         if self.balloon:
-            return self.sondes_at + P.FETCH_BUSY_S
+            return self.sondes_at + (60 if getattr(self, "plugged", False) else P.FETCH_BUSY_S)
         if in_balloon_window(now):
             return self.sondes_at + WINDOW_CHECK_S
         return min(next_balloon_window(now), self.sondes_at + (PICO_CHECK_S if self.amateur else SONDE_CHECK_S))

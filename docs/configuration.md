@@ -27,7 +27,7 @@ and logs the error in `/tmp/planes.log`.
 | `night` | Quiet hours with no fetching. The planes frame shows the night view; the sky frame redraws every half hour | `["23:00", "07:00"]` |
 | `tz` | Your time zone in POSIX form, e.g. `"PST8PDT,M3.2.0,M11.1.0"` | Toronto |
 | `frontlight` | Front light level from 0 to 24, used only while charging | `3` |
-| `power` | `wifi_toggle`, `suspend` and `governor`. Leave them on for battery life | All on |
+| `power` | `wifi_toggle`, `suspend` and `governor`. Leave them on for battery life. On a charger they step aside: Wi-Fi stays up, the Kindle stays awake and redraws every minute | All on |
 
 ## A new home
 
