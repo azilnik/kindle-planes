@@ -93,6 +93,14 @@ display.
   Satellite positions use [sgp4](https://pypi.org/project/sgp4/), and the star catalog
   comes from [d3-celestial](https://github.com/ofrohn/d3-celestial).
 
+## On a charger
+
+Plugged in, the sky frame checks every minute but leaves the screen alone while nothing
+much is happening: it changes when the headline, the numbers or what's on the dome change,
+and otherwise every 15 minutes as the sky turns. Half an hour before something good, one
+clean refresh brings it up. While a pass or a Starlink train crosses, the dome redraws every
+15 seconds so you can watch it move, and one more refresh clears the screen after.
+
 ## At night
 
 During the `night` hours the Kindle doesn't fetch, and redraws the sky every half hour.

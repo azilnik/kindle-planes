@@ -1656,6 +1656,28 @@ class Frame:
         self.log = {"things": len(self.sky["things"])}
         return img
 
+    def mood(self, now):
+        """Live while a pass or train crosses; soon when the headline is something on its way
+        within the half hour; otherwise calm."""
+        tr = self.sky.get("train")
+        if any(ps["rise"] <= now <= ps["set"] for _, ps in self.sky.get("passes", [])) or \
+                (tr and tr["start"] <= now <= tr["end"]):
+            return "live"
+        h = self.sky.get("hero", {})
+        return "soon" if "wonder" in h and 0 < h["start"] - now <= 1800 else "calm"
+
+    def screen_key(self):
+        """What the screen says, with degrees to the nearest 5 so a Moon climbing a degree
+        doesn't count as news (the 15-minute redraw catches it up), and what's on the dome."""
+        h = self.sky["hero"]
+
+        def coarse(v):
+            return "%d°" % (5 * round(int(v[:-1]) / 5.0)) if v.endswith("°") and v[:-1].lstrip("-").isdigit() else v
+        return (h["head"], tuple((coarse(v), lab) for v, lab in h.get("stats", [])), h.get("foot"), h.get("next"),
+                tuple(sorted(th["kind"] + th["name"] for th in self.sky["things"] if not th.get("below"))),
+                bool(self.sky.get("train")), tuple(ps["rise"] for _, ps in self.sky.get("passes", [])
+                                                   if ps["rise"] <= self.sky["t"] + 3600))
+
     def moving(self, now):
         """Minute redraws while a pass or train is on: they cross the sky in minutes. Not for
         balloons, which only move when new data comes in, every 5 minutes with the fetch."""

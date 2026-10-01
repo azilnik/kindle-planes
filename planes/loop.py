@@ -27,6 +27,14 @@ most of what it shows; planes always has something to fetch by morning).
 Plugged in, battery doesn't matter: Wi-Fi stays up (SSH works without the power button),
 the Kindle never suspends, and the picture redraws every minute. Anything on a shared rate
 limit keeps its pace; that's up to the frame's fetch_every.
+
+A frame can make that calmer with two optional hooks:
+    screen_key()  what the last render says, as a value; the first item its headline
+    mood(now)     "calm", "soon" (something good within the half hour) or "live"
+Then, plugged in, it still checks every minute but the screen only changes when what it
+says does, or every 15 minutes as the sky turns; while it's "live", every 15 seconds. A full
+flash only on a new headline, when something starts or ends, or once enough partial updates
+leave ghosts.
 """
 
 import os
@@ -44,6 +52,9 @@ DRAW_S = 60
 FULL_REFRESH_S = 1800     # a full e-ink flash this often to clear ghosting
 NIGHT_WAKE_S = 1800       # brief wakes at night so no single suspend runs for hours
 MAX_BACKOFF_S = 600       # adsb.lol rate-limits; failures back off to this
+LIVE_S = 15               # plugged in, the redraw while something crosses the sky
+CALM_REDRAW_S = 900       # plugged in, the longest a still screen goes without a redraw
+GHOST_PARTIALS = 40       # partial updates before a full flash clears the ghosting
 LOW_BATTERY = 5
 LOW_BATTERY_RESUME = 10
 UA = {"User-Agent": "kindle-planes/0.1 (home display)"}
@@ -130,6 +141,7 @@ def run(frame, args):
     failures = 0
     last_style = cfg["style"]
     was_plugged = False
+    shown_key, shown_mood, shown_at, partials = None, None, 0.0, 0
     while True:
         cfg = frame.configure(args)
         pw = cfg["power"]
@@ -222,25 +234,45 @@ def run(frame, args):
         # light it when on a charger (and skip suspend below), keep it dark on battery
         power.set_frontlight(cfg["frontlight"] if plugged else 0)
         drawn = time.time()
+        calm = plugged and hasattr(frame, "screen_key")
+        mood = None
+        shown = 1
         try:
             img = frame.render(drawn, fetched_at)
-            turn(img, cfg["rotate"]).save(frame_path)
-            if not args.out:
-                flash = restyled or drawn - last_full > FULL_REFRESH_S
+            if calm:
+                key, mood = frame.screen_key(), frame.mood(drawn)
+                shown = int(restyled or key != shown_key or mood != shown_mood or mood == "live"
+                            or drawn - shown_at >= CALM_REDRAW_S)
+            if shown:
+                turn(img, cfg["rotate"]).save(frame_path)
+            if shown and not args.out:
+                if calm:
+                    # One clean flash for a new headline, for something starting to happen and for
+                    # the quiet after it (not between soon and live: trains come in waves)
+                    # Ghosts wait out the action (up to half an hour): its end flashes anyway
+                    flash = restyled or not shown_key or key[0] != shown_key[0] \
+                        or partials >= GHOST_PARTIALS * (3 if mood == "live" else 1) \
+                        or (mood != shown_mood and "calm" in (mood, shown_mood))
+                    shown_key, shown_mood, shown_at = key, mood, drawn
+                else:
+                    flash = restyled or drawn - last_full > FULL_REFRESH_S
                 show(frame_path, flash=flash)
+                partials = 0 if flash else partials + 1
                 if flash:
                     last_full = drawn
         except Exception:
             if args.once:
                 raise
             traceback.print_exc()
-        power.log("draw", ms=int((time.time() - drawn) * 1000), **frame.log)
+        power.log("draw", ms=int((time.time() - drawn) * 1000), shown=shown, **frame.log)
         if args.once:
             print(frame_path)
             return
 
-        # Draw on the minute so the clock is exact; with nothing to move, just wait for the fetch
-        next_draw = (int(time.time() // DRAW_S) + 1) * DRAW_S if plugged or frame.moving(drawn) else next_fetch
+        # Draw on the minute so the clock is exact; with nothing to move, just wait for the fetch.
+        # Plugged in and live, every 15 seconds
+        step = LIVE_S if mood == "live" else DRAW_S
+        next_draw = (int(time.time() // step) + 1) * step if plugged or frame.moving(drawn) else next_fetch
         if getattr(frame, "idle_redraw_s", None):
             next_draw = min(next_draw, drawn + frame.idle_redraw_s)
         # Never deep-sleep in the first minute after start, so a bad build can be stopped over SSH
