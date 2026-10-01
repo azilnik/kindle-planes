@@ -119,12 +119,13 @@ def build(data, t):
     add = sky["things"].append
 
     # Nothing old shown as live: a weather balloon that's down (fresh_balloon), a pico unheard
-    # for 2 hours has drifted off. Nor anything under the horizon: it can't be seen
+    # for 2 hours has drifted off. Nor anything under a degree up: below the horizon it can't
+    # be seen, and just above it it's lost in the haze (and "0°" reads as a mistake)
     b = data.get("balloon") if fresh_balloon(data.get("balloon"), t) else None
     if b:
         _, lat_b, lon_b, alt_m = b["track"][-1]
         el, az, rng = seen_from_home(lat_b, lon_b, alt_m / 1000)
-    if b and el > 0:
+    if b and el >= 1:
         # Burst once it's 300 m below the highest it got, or 100 m down since the last fix, or
         # its sonde says it's dropping (first heard already falling). Mostly its own heights:
         # not every sonde reports a vertical speed, and GPS height wanders a little
@@ -132,13 +133,12 @@ def build(data, t):
         falling = peak_alt(b) - alt_m >= 300 or (len(fixes) > 1 and fixes[-2][3] - alt_m >= 100) \
             or (b.get("vel_v") or 0) < -3
         add(dict(kind="balloon", name="Weather balloon", el=el, az=az, km=rng, alt_km=alt_m / 1000,
-                 rising=not falling,
-                 track=b["track"]))
+                 rising=not falling, track=b["track"]))
 
     pico = data.get("amateur")
     if pico and t - pico.get("when", 0) < 7200:
         el, az, rng = seen_from_home(pico["lat"], pico["lon"], pico["alt"] / 1000)
-        if el > 0:
+        if el >= 1:
             add(dict(kind="pico", name="Pico balloon", el=el, az=az, km=rng,
                      alt_km=pico["alt"] / 1000, days=pico.get("days")))
 
