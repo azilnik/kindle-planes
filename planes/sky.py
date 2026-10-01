@@ -167,7 +167,9 @@ def build(data, t):
         ra, dec, dist = astro.planet(name, t)
         el, az = astro.alt_az(ra, dec, t, lat, lon)
         if el > -BELOW:
-            add(below(dict(kind="planet", name=name, el=el, az=az, km=dist), planet_el(name)))
+            # Venus by day is there for whoever knows where to look: only where it has room
+            add(below(dict(kind="planet", name=name, el=el, az=az, km=dist, extra=sky["sun_el"] > -5),
+                      planet_el(name)))
     if sky["sun_el"] > -BELOW:
         ra, dec, _ = astro.sun(t)
         el, az = astro.alt_az(ra, dec, t, lat, lon)
@@ -382,7 +384,7 @@ def star_names(d, t, limit):
         for lx in (p[0] + 14, p[0] - 14 - w):
             box = (lx - 6, p[1] - h * 0.7, lx + w + 6, p[1] + h * 0.7)
             if inside(lx, p[1], 20) and inside(lx + w, p[1], 20) and not any(
-                    box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in TAKEN):
+                    box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in TAKEN + PATHS):
                 glow_text(d, (lx, p[1] - h * 0.6), name, SMALL, SOFT, GROUND)
                 named(name, STAR_LY.get(name, 100) * KM_PER_LY, "star")
                 TAKEN.append(box)
@@ -404,6 +406,11 @@ def glow_text(d, xy, s, f, fill, bg):
 
 
 TAKEN = []
+# Where the lines run: labels keep off them, but the headline's would rather cross one than
+# drift from its mark
+PATHS = []
+# Every mark's center, so no label goes nearer another mark than its own
+MARKS = []
 # Everything the dome has put a name to, as (name, km, kind): the list in the panel is its key
 NAMED = []
 
@@ -435,14 +442,34 @@ def side_label(d, x, y, off, s, f, fill, bg, dy=0, must=False):
     def box(lx, ly):
         return (lx - 4, ly - 2, lx + w + 4, ly + h * 1.2)
 
-    def overlap(sp):
-        return sum(overlaps(box(*sp), t) for t in TAKEN)
+    def overlap(sp, boxes):
+        # Not counting its own mark, whose box the nearest spots just touch
+        return sum(overlaps(box(*sp), t) for t in boxes
+                   if math.hypot((t[0] + t[2]) / 2 - x, (t[1] + t[3]) / 2 - y) > 8)
 
-    on = [sp for sp in spots if inside(sp[0], sp[1] + h / 2, 4) and inside(sp[0] + w, sp[1] + h / 2, 4)] or spots
-    clear = next((sp for sp in on if not overlap(sp)), None)
-    if not clear and not must:
+    def gap(b, px, py):
+        return math.hypot(max(b[0] - px, 0, px - b[2]), max(b[1] - py, 0, py - b[3]))
+
+    def own(sp):
+        """Nearer its own mark than any other, so it can't be read as another's name."""
+        b = box(*sp)
+        mine = gap(b, x, y)
+        return all(gap(b, mx, my) >= mine for mx, my in MARKS if math.hypot(mx - x, my - y) > 30)
+
+    on = [sp for sp in spots if inside(sp[0], sp[1] + h / 2, 4) and inside(sp[0] + w, sp[1] + h / 2, 4) and own(sp)]
+    spot = next((sp for sp in on if not overlap(sp, TAKEN + PATHS)), None)
+    if not spot and must:
+        # The headline's name crosses a line before it leaves its mark: a gap is cut in the
+        # line behind it, and only in the line
+        spot = next((sp for sp in on if not overlap(sp, TAKEN)), None) or \
+            min(on or spots, key=lambda sp: overlap(sp, TAKEN))
+        b = box(*spot)
+        for t in PATHS:
+            if overlaps(b, t):
+                d.rectangle((max(b[0], t[0]), max(b[1], t[1]), min(b[2], t[2]), min(b[3], t[3])), fill=bg)
+    if not spot:
         return False
-    lx, ly = clear or min(on, key=overlap)
+    lx, ly = spot
     TAKEN.append(box(lx, ly))
     glow_text(d, (lx, ly), s, f, fill, bg)
     return True
@@ -487,7 +514,7 @@ def claim_path(pts, half):
         n = max(1, int(math.hypot(x1 - x0, y1 - y0) // half))
         for k in range(n + 1):
             x, y = x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n
-            TAKEN.append((x - half, y - half, x + half, y + half))
+            PATHS.append((x - half, y - half, x + half, y + half))
 
 
 def ghost_moon(moon, t):
@@ -534,8 +561,10 @@ def draw_dome(img, d, sky):
         return th["kind"] == hk and (th["kind"] != "station" or th["name"] == hname)
     R = DOME_R
     things = sky["things"]
-    up = [th for th in things if not th.get("below")]
+    up = [th for th in things if not th.get("below") and not th.get("extra")]
     del TAKEN[:]
+    del PATHS[:]
+    del MARKS[:]
     del NAMED[:]
     # Solid page, sky and ground alike: only the horizon line says where the sky ends
     d.ellipse((DOME_X - R, DOME_Y - R, DOME_X + R, DOME_Y + R), outline=FRAME, width=7)
@@ -564,6 +593,10 @@ def draw_dome(img, d, sky):
             continue
         r = {"moon": 36, "station": 40, "sun": 36, "train": 18, "planet": 18}.get(th["kind"], 10)
         marks.append((x - r, y - r, x + r, y + r))
+    MARKS.extend(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in marks)
+    # You: no label covers the dot, though one may sit nearer it than its own mark (nobody
+    # reads a name as yours)
+    marks.append((DOME_X - 19, DOME_Y - 19, DOME_X + 19, DOME_Y + 19))
     TAKEN.extend(marks)
     if limit:
         # The few brightest are sparkles, big enough that a label on one hides it
@@ -658,7 +691,7 @@ def draw_dome(img, d, sky):
 
         def cost(sp, w=w, h=h):
             b = (sp[0] - 4, sp[1] - 2, sp[0] + w + 4, sp[1] + h * 1.2)
-            return sum(overlaps(b, c) for c in TAKEN), inside((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+            return sum(overlaps(b, c) for c in TAKEN + PATHS), inside((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
 
         lx, ly = min(spots, key=cost)
         TAKEN.append((lx - 4, ly - 2, lx + w + 4, ly + h * 1.2))
@@ -702,7 +735,7 @@ def draw_dome(img, d, sky):
             x, y = dome_xy(max(th["el"], 5), th["az"])  # nudged up off the horizon line so it all shows
             if th["kind"] == "pico":
                 draw_balloon(img, x, y, 48, lit("pico"), dome)
-                labels.append((is_hero(th), x, y, 32, th["name"], BLABEL, lit("pico"), 0, [(th["name"], th["km"], "pico")]))
+                labels.append((is_hero(th), x, y, 32, "Balloon", BLABEL, lit("pico"), 0, [(th["name"], th["km"], "pico")]))
             else:
                 draw_balloon(img, x, y, 56, lit("balloon"), dome, burst=not th["rising"])
                 labels.append((is_hero(th), x, y, 36, "Balloon", BLABEL, lit("balloon"), 0, [("Balloon", th["km"], "balloon")]))
@@ -719,6 +752,16 @@ def draw_dome(img, d, sky):
         if side_label(d, x, y, off, s, f, fill, dome, dy=dy, must=must):
             for name in names:
                 named(*name)
+
+    # Extras last, and whole or not at all: a mark with its name, clear of everything else
+    for th in things:
+        if th.get("extra") and not th.get("below"):
+            x, y = dome_xy(th["el"], th["az"])
+            mark = (x - 20, y - 20, x + 20, y + 20)
+            if not any(overlaps(mark, b) for b in TAKEN + PATHS) and \
+                    side_label(d, x, y, 24, th["name"], LABEL, ink, dome, dy=4):
+                icons.paste(img, icons.glyph("sparkle", 34, ink), x, y, dome)
+                named(th["name"], th["km"], "planet")
 
     if limit:
         star_names(d, t, limit)
