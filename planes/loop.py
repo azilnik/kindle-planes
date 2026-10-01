@@ -29,7 +29,8 @@ the Kindle never suspends, and the picture redraws every minute. Anything on a s
 limit keeps its pace; that's up to the frame's fetch_every.
 
 A frame can make that calmer with two optional hooks:
-    screen_key()  what the last render says, as a value; the first item its headline
+    screen_key()  what the last render says, as a value; the first item the moment (the
+                  headline, say), a change of which is worth a full flash
     mood(now)     "calm", "soon" (something good within the half hour) or "live"
 Then, plugged in, it still checks every minute but the screen only changes when what it
 says does, or every 15 minutes as the sky turns; while it's "live", every 15 seconds. A full
@@ -241,13 +242,14 @@ def run(frame, args):
             img = frame.render(drawn, fetched_at)
             if calm:
                 key, mood = frame.screen_key(), frame.mood(drawn)
+                # (Not "since" alone: a clock set back must not stall the redraw)
                 shown = int(restyled or key != shown_key or mood != shown_mood or mood == "live"
-                            or drawn - shown_at >= CALM_REDRAW_S)
+                            or not 0 <= drawn - shown_at < CALM_REDRAW_S)
             if shown:
                 turn(img, cfg["rotate"]).save(frame_path)
             if shown and not args.out:
                 if calm:
-                    # One clean flash for a new headline, for something starting to happen and for
+                    # One clean flash for a new moment, for something starting to happen and for
                     # the quiet after it (not between soon and live: trains come in waves)
                     # Ghosts wait out the action (up to half an hour): its end flashes anyway
                     flash = restyled or not shown_key or key[0] != shown_key[0] \
@@ -264,6 +266,7 @@ def run(frame, args):
             if args.once:
                 raise
             traceback.print_exc()
+            shown = 0
         power.log("draw", ms=int((time.time() - drawn) * 1000), shown=shown, **frame.log)
         if args.once:
             print(frame_path)

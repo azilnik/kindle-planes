@@ -125,8 +125,14 @@ def build(data, t):
         _, lat_b, lon_b, alt_m = b["track"][-1]
         el, az, rng = seen_from_home(lat_b, lon_b, alt_m / 1000)
     if b and el > 0:
+        # Burst once it's 300 m below the highest it got, or 100 m down since the last fix, or
+        # its sonde says it's dropping (first heard already falling). Mostly its own heights:
+        # not every sonde reports a vertical speed, and GPS height wanders a little
+        fixes = b["track"]
+        falling = peak_alt(b) - alt_m >= 300 or (len(fixes) > 1 and fixes[-2][3] - alt_m >= 100) \
+            or (b.get("vel_v") or 0) < -3
         add(dict(kind="balloon", name="Weather balloon", el=el, az=az, km=rng, alt_km=alt_m / 1000,
-                 rising=(b.get("vel_v") or 0) > 0, burst_km=b.get("burst_alt", 0) / 1000,
+                 rising=not falling,
                  track=b["track"]))
 
     pico = data.get("amateur")
@@ -1034,7 +1040,7 @@ def events(sky):
     if b:
         evs.append(dict(kind="balloon", wonder=3, start=t, end=t, head="Weather balloon",
                         stats=[("%.0f" % b["alt_km"], "KM HIGH"), ("%d°" % b["el"], height(b["el"], b["az"]))],
-                        foot=("Climbing" if b["rising"] else "Falling") + ", from " + launch_site(b["track"][0])))
+                        foot=("Climbing" if b["rising"] else "Falling") + launch_site(b["track"][0])))
     day = sky.get("day")
     sun = next((th for th in things if th["kind"] == "sun"), None)
     if day:
@@ -1126,12 +1132,15 @@ def hero(sky):
 
 
 def launch_site(fix):
-    """Where the balloon went up: by name for the sites people know, else by distance."""
+    """", from Buffalo": where the balloon went up, by name for the sites people know, else
+    by distance. Nothing when it was first heard already high: that's not where it started."""
+    if fix[3] > 3000:
+        return ""
     for name, lat, lon in SONDE_SITES:
         if P.distance_bearing(lat, lon, fix[1], fix[2])[0] < 40:
-            return name
+            return ", from " + name
     dist, brg = P.distance_bearing(P.HOME_LAT, P.HOME_LON, fix[1], fix[2])
-    return "%d km %s" % (round(dist, -1), P.compass(brg))
+    return ", from %d km %s" % (round(dist, -1), P.compass(brg))
 
 
 SONDE_SITES = (("Buffalo", 42.94, -78.72), ("Detroit", 42.70, -83.47), ("Albany", 42.69, -73.83),
@@ -1462,11 +1471,11 @@ def fetch_balloon(session, now, balloon):
         return balloon if fresh_balloon(balloon, now) else None
     _, when, (lat, lon, alt), serial, f = min(fresh, key=lambda x: x[0])
     if not balloon or balloon.get("serial") != serial or not balloon.get("track"):
-        balloon = dict(serial=serial, track=[], burst_alt=0)
+        balloon = dict(serial=serial, track=[])
     if not balloon["track"] or when > balloon["track"][-1][0]:
         balloon["track"].append([round(when), round(lat, 4), round(lon, 4), round(alt)])
     vel = f.get("vel_v")
-    balloon.update(vel_v=vel if isinstance(vel, (int, float)) else None, burst_alt=max(balloon["burst_alt"], round(alt)))
+    balloon["vel_v"] = vel if isinstance(vel, (int, float)) else None
     return balloon
 
 
@@ -1493,7 +1502,13 @@ def fresh_balloon(b, now):
     if not (b and b.get("track") and now - b["track"][-1][0] < 1200):
         return False
     alt = b["track"][-1][3]
-    return not (alt < 1000 and b.get("burst_alt", 0) > alt + 1000)
+    return not (alt < 1000 and peak_alt(b) > alt + 1000)
+
+
+def peak_alt(b):
+    """The highest it got, from its own track (a few fixes a minute apart, so within a few
+    hundred meters of the burst)."""
+    return max(fix[3] for fix in b["track"])
 
 
 def fetch_amateur(session, now):
@@ -1668,12 +1683,16 @@ class Frame:
 
     def screen_key(self):
         """What the screen says, with degrees to the nearest 5 so a Moon climbing a degree
-        doesn't count as news (the 15-minute redraw catches it up), and what's on the dome."""
+        doesn't count as news (the 15-minute redraw catches it up), and what's on the dome.
+        First the moment, whose change is worth a flash: the headline, and a balloon's burst."""
         h = self.sky["hero"]
+        # A balloon bursting is a new moment, as good as a new headline
+        moment = (h["head"], any(th["kind"] == "balloon" and not th["rising"] for th in self.sky["things"])
+                  if h["kind"] == "balloon" else None)
 
         def coarse(v):
             return "%d°" % (5 * round(int(v[:-1]) / 5.0)) if v.endswith("°") and v[:-1].lstrip("-").isdigit() else v
-        return (h["head"], tuple((coarse(v), lab) for v, lab in h.get("stats", [])), h.get("foot"), h.get("next"),
+        return (moment, tuple((coarse(v), lab) for v, lab in h.get("stats", [])), h.get("foot"), h.get("next"),
                 tuple(sorted(th["kind"] + th["name"] for th in self.sky["things"] if not th.get("below"))),
                 bool(self.sky.get("train")), tuple(ps["rise"] for _, ps in self.sky.get("passes", [])
                                                    if ps["rise"] <= self.sky["t"] + 3600))
