@@ -139,7 +139,8 @@ def build(data, t):
     if pico and t - pico.get("when", 0) < 7200:
         el, az, rng = seen_from_home(pico["lat"], pico["lon"], pico["alt"] / 1000)
         if el >= 1:
-            add(dict(kind="pico", name="Pico balloon", el=el, az=az, km=rng,
+            # A pico balloon, in plain words: a small one radio hobbyists send round the world
+            add(dict(kind="pico", name="Hobby balloon", el=el, az=az, km=rng,
                      alt_km=pico["alt"] / 1000, days=pico.get("days")))
 
     def moon_el(tt):
@@ -695,7 +696,7 @@ def draw_dome(img, d, sky):
             a = math.radians(k * 45 + 22.5)
             d.line((x + 12 * math.cos(a), y + 12 * math.sin(a), x + 30 * math.cos(a), y + 30 * math.sin(a)),
                    fill=fill, width=5)
-        labels.append((True, x, y, 36, hero["head"], BLABEL, fill, 0, []))
+        labels.append((True, x, y, 36, "Meteors", BLABEL, fill, 0, []))
 
     # A Moon about to rise, waiting at the rim where it will come up, with when
     if ghost:
@@ -816,13 +817,16 @@ def ms(seconds):
 
 
 def moon_phase(frac, waxing):
+    """In everyday words: no waxing, waning, gibbous or quarter."""
     if frac > 0.97:
         return "Full moon"
     if frac < 0.03:
         return "New moon"
     if 0.42 < frac < 0.58:
-        return "First quarter moon" if waxing else "Last quarter moon"
-    return ("Waxing " if waxing else "Waning ") + ("gibbous moon" if frac > 0.5 else "crescent moon")
+        return "Half moon"
+    if frac < 0.42:
+        return "Crescent moon"
+    return "Moon, nearly full" if waxing else "Moon, past full"
 
 
 def clock_ap(t):
@@ -893,10 +897,11 @@ def along(start, end, t):
 # right now: a thing that's on scores its wonder in full; a thing still to come scores
 # less the further off it is, with a lead that grows with wonder, so a sunset only matters
 # in the moment while a great ISS pass takes the afternoon and a big meteor shower the day
-# before. Below the headline, "Next" names the most wonderful thing in the coming week.
+# before. Below the headline, "Next" names the best thing in the coming two days, and "Up
+# ahead" the best thing in the two months after: short and long term, so there's always
+# something tonight and something to look forward to. Plain words throughout: "Jupiter at
+# its brightest", never "opposition".
 LEAD_H = {1: 0.5, 2: 2, 3: 6, 4: 24, 5: 24 * 7}
-NEXT_DAYS = 7          # for everything; past a week only for what comes once a year or less,
-YEARLY_DAYS = 30       # and not so far off that it says the same thing all season
 # The major showers' peak nights, from the International Meteor Organization: the rate an
 # hour under a perfectly dark sky with the radiant overhead (ZHR), the population index r
 # (how fast the count falls as the sky brightens) and the radiant, RA and Dec
@@ -926,6 +931,13 @@ def how_soon(at, now, timed):
     if days >= 2:
         return "in\u00a0%d\u00a0days" % days
     return ((clock(at) + " " if timed else "") + day_word(at, now).lower()).replace(" ", "\u00a0")
+
+
+def in_days(at, now):
+    """For Up ahead: in 5 days, or in 6 weeks once it's three weeks off, so it doesn't
+    tick over every day."""
+    days = days_apart(at - (6 * 3600 if time.localtime(at).tm_hour < 6 else 0), now)
+    return ("in\u00a0%d\u00a0days" % days) if days < 21 else "in\u00a0%d\u00a0weeks" % round(days / 7.0)
 
 
 def night_word(t, now):
@@ -984,9 +996,9 @@ def shower_events(t, lat, lon, limit):
             if rate < 5:
                 continue
             out.append(dict(kind="shower", wonder=4 if rate >= 20 else 3 if rate >= 10 else 2, next_only=rate < 10,
-                            start=start, end=start + 7 * 3600, head=name, best=at, radiant=(ra, dec),
+                            start=start, end=start + 7 * 3600, head=name[:-1] + " meteors", best=at, radiant=(ra, dec),
                             rate="%d" % (rate if rate < 10 else 5 * round(rate / 5.0)),
-                            next=(name, start, False), yearly=True))
+                            next=(name[:-1] + " meteors", start, False), yearly=True))
     return out
 
 
@@ -1003,14 +1015,170 @@ def clouded(ev, clouds):
     return len(hours) >= 3 and sum(hours) / len(hours) >= CLOUDY
 
 
-def next_full_moon(t):
-    """The next night the Moon is full, to the hour."""
-    tt = t
-    while tt < t + 31 * 86400:
-        if astro.moon(tt)[3] > 0.995:
-            return tt
-        tt += 3600
-    return None
+NEXT_H = 48           # Next: the best thing in the coming two days
+AHEAD_DAYS = 60       # Up ahead: the best thing after that, out to two months
+# The full moons' old names, as almanacs still print them, by the month they fall in
+MOON_NAMES = ("Wolf", "Snow", "Worm", "Pink", "Flower", "Strawberry", "Buck", "Sturgeon",
+              "Corn", "Hunter's", "Beaver", "Cold")
+FULL_MOONS = {n + " Moon" for n in MOON_NAMES + ("Harvest",)} | {"Supermoon", "Blue moon", "Full moon"}
+
+
+def nearest_night(tt):
+    """11 pm on the night closest to tt, so a full moon at 10 am is 'tonight's' or last
+    night's, never 'this morning's'."""
+    lt = time.localtime(tt)
+    nights = [time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + k, 23, 0, 0, 0, 0, -1)) for k in (-1, 0)]
+    return min(nights, key=lambda n: abs(n - tt))
+
+
+def sep(ra1, dec1, ra2, dec2):
+    """Angle between two points on the sky, degrees."""
+    a, b = math.radians(dec1), math.radians(dec2)
+    c = math.sin(a) * math.sin(b) + math.cos(a) * math.cos(b) * math.cos(math.radians(ra1 - ra2))
+    return math.degrees(math.acos(max(-1.0, min(1.0, c))))
+
+
+def full_moons(t, days):
+    """Every full moon from t, to the minute: where the Moon's longitude is opposite the Sun's."""
+    def gap(tt):
+        return (astro.moon_ecliptic(tt)[0] - astro.sun(tt)[2] - 180 + 540) % 360 - 180
+    out, tt = [], t
+    while tt < t + days * 86400:
+        a, b = gap(tt), gap(tt + 6 * 3600)
+        if a < 0 <= b:
+            lo, hi = tt, tt + 6 * 3600
+            while hi - lo > 60:
+                mid = (lo + hi) / 2
+                lo, hi = (mid, hi) if gap(mid) < 0 else (lo, mid)
+            out.append(lo)
+        tt += 6 * 3600
+    return out
+
+
+def daily(t, days, f):
+    """f at noon on each day from two days before t to `days` after: [(noon, value)]."""
+    lt = time.localtime(t)
+    noons = [time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + k, 12, 0, 0, 0, 0, -1)) for k in range(-2, days + 1)]
+    return [(n, f(n)) for n in noons]
+
+
+def peaks(series, bigger=True):
+    """The days a value is at its highest (or lowest) of the days around it."""
+    sign = 1 if bigger else -1
+    return [(n, v) for (_, a), (n, v), (_, b) in zip(series, series[1:], series[2:])
+            if sign * v > sign * a and sign * v >= sign * b]
+
+
+def ahead_events(t, lat, lon):
+    """What's coming in the next two months, worked out once a day: the full moons by
+    their names (and the special ones), eclipses of the Moon you can see from here,
+    planets at their brightest, the Moon passing close to Venus or Jupiter, and the turns
+    of the seasons. Each is (wonder, at, label, night); night means its words are about a
+    night ("tomorrow night"), else a day."""
+    out = []
+    moons = full_moons(t - 32 * 86400, AHEAD_DAYS + 32)
+
+    def harvest(fm):
+        # The full moon nearest the September equinox; the one after it is the Hunter's
+        equinox = time.mktime((time.localtime(fm).tm_year, 9, 22, 12, 0, 0, 0, 0, -1))
+        return abs(fm - equinox) < 15 * 86400 and all(abs(m - equinox) >= abs(fm - equinox) for m in moons)
+    for i, fm in enumerate(moons):
+        if fm < t:
+            continue
+        lam, beta, dist = astro.moon_ecliptic(fm)
+        ma = astro.moon_alt_az(fm, lat, lon)[0]
+        lt = time.localtime(fm)
+        # The Moon misses Earth's shadow unless it passes within about a degree of the Sun's
+        # path. Checked against NASA's eclipses 2026-30: every one deeper than a sliver
+        # passes under 0.85° here and every near miss over it. The formula can't tell total
+        # from deep partial, so it never says total; the deep ones just rank higher
+        if abs(beta) < 0.85 and ma > 0 and astro.sun_alt(fm, lat, lon) < -6:
+            out.append((5 if abs(beta) < 0.5 else 4, fm, "Eclipse of the Moon", True))
+        elif dist < 361000:
+            out.append((3, nearest_night(fm), "Supermoon", True))
+        elif i and time.localtime(moons[i - 1]).tm_mon == lt.tm_mon:
+            out.append((3, nearest_night(fm), "Blue moon", True))
+        elif lat > 0:
+            name = "Harvest" if harvest(fm) else "Hunter's" if i and harvest(moons[i - 1]) else                 MOON_NAMES[lt.tm_mon - 1]
+            out.append((2, nearest_night(fm), name + " Moon", True))
+        else:
+            out.append((2, nearest_night(fm), "Full moon", True))
+    # Planets at their brightest: opposite the Sun, up all night
+    sun_at = {}
+
+    def from_sun(name):
+        def f(n):
+            if n not in sun_at:
+                sun_at[n] = astro.sun(n)[:2]
+            ra, dec, _ = astro.planet(name, n)
+            return sep(ra, dec, *sun_at[n])
+        return f
+    for name in ("Mars", "Jupiter", "Saturn"):
+        for n, v in peaks(daily(t, AHEAD_DAYS, from_sun(name))):
+            if v > 170:
+                out.append((3, nearest_night(n), name + " at its brightest", True))
+    # Venus at its furthest from the Sun: highest in the sky after sunset, or before sunrise
+    for n, v in peaks(daily(t, AHEAD_DAYS, from_sun("Venus"))):
+        if v > 40:
+            ra = astro.planet("Venus", n)[0]
+            evening = (ra - astro.sun(n)[0]) % 360 < 180
+            out.append((3, n, "Venus highest " + ("after sunset" if evening else "before sunrise"), False))
+    out += moon_meetings(t, lat, lon)
+    # The turns of the year, said as what's good about them
+    if abs(lat) > 10:
+        north = lat > 0
+        dec = daily(t, AHEAD_DAYS, lambda n: astro.sun(n)[1])
+        for n, _ in peaks(dec):
+            out.append((2, n, "Longest day of the year" if north else "Days start getting longer", False))
+        for n, _ in peaks(dec, bigger=False):
+            out.append((2, n, "Days start getting longer" if north else "Longest day of the year", False))
+        for (_, a), (n, b) in zip(dec, dec[1:]):
+            if a < 0 <= b:
+                out.append((2, n, "First day of spring" if north else "First day of fall", False))
+            elif a >= 0 > b:
+                out.append((2, n, "First day of fall" if north else "First day of spring", False))
+    return [ev for ev in out if ev[1] >= t]
+
+
+def moon_meetings(t, lat, lon):
+    """Nights the Moon passes within 3° of Venus or Jupiter, both up in a dark sky: an easy,
+    lovely sight. The closest night of each meeting, measured as you'd see it."""
+    lt = time.localtime(t)
+    found = {"Venus": [], "Jupiter": []}
+    for k in range(AHEAD_DAYS + 1):
+        night = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + k, 17, 0, 0, 0, 0, -1))
+        # The planets hardly move against the stars in a night: once a night will do
+        where = {name: astro.planet(name, night + 7 * 3600)[:2] for name in found}
+        best = {}
+        for h in range(15):
+            tt = night + h * 3600
+            if astro.sun_alt(tt, lat, lon) > -8:
+                continue
+            m_el, m_az = astro.moon_alt_az(tt, lat, lon)[:2]
+            if m_el < 10:
+                continue
+            for name in found:
+                el, az = astro.alt_az(*where[name], tt, lat, lon)
+                if el < 10:
+                    continue
+                d = sep(m_az, m_el, az, el)
+                if d < best.get(name, (99,))[0]:
+                    best[name] = (d, tt)
+        for name, (d, tt) in best.items():
+            found[name].append((d, tt))
+    out = []
+    for name, nights in found.items():
+        for i, (d, tt) in enumerate(nights):
+            closest = all(d <= other[0] for other in nights[max(0, i - 2):i + 3])
+            if d < 3 and closest:
+                out.append((3, tt, "Moon close to " + name, True))
+    return out
+
+
+def ahead_list(t):
+    lat, lon = P.HOME_LAT, P.HOME_LON
+    return kept("ahead", t, (time.strftime("%Y-%m-%d", time.localtime(t)), lat, lon), 86400,
+                lambda: ahead_events(t, lat, lon))
 
 
 def events(sky):
@@ -1047,7 +1215,7 @@ def events(sky):
         # Daylight: the day as a path from sunrise to sunset, and how it's changing
         yd, tm = sky.get("yesterday"), sky.get("tomorrow")
         diff = day["length"] - yd["length"] if yd else 0
-        span = max(h for _, h in sky["year"]) - min(h for _, h in sky["year"])
+        span = year_span(sky)
         longest = yd and tm and day["length"] >= max(yd["length"], tm["length"]) and span > 1
         evs.append(dict(kind="sun", wonder=2, start=day["rise"], end=day["set"], head="Sunset " + clock(day["set"]),
                         stats=[(hm(day["length"]), "OF DAYLIGHT"),
@@ -1074,10 +1242,14 @@ def events(sky):
     if moon:
         full = moon["frac"] > 0.97
         phase = moon_phase(moon["frac"], moon["waxing"])
+        if full:
+            # Tonight's full moon by its name, when it has one (the Hunter's Moon, a supermoon)
+            phase = next((label for _, at, label, _ in ahead_list(t)
+                          if label in FULL_MOONS and abs(at - t) < 36 * 3600), phase)
         if not moon.get("below") and sky["sun_el"] < 0:
             # A full or new moon says how lit it is in its name; the percent is for the others.
             # Low in the haze of the horizon it's a sight for whoever happens to look
-            lit = [] if phase in ("Full moon", "New moon") else [("%d%%" % round(moon["frac"] * 100), "LIT")]
+            lit = [] if full or phase == "New moon" else [("%d%%" % round(moon["frac"] * 100), "LIT")]
             evs.append(dict(kind="moon", wonder=1 if moon["el"] < 10 else (3 if full else 2), start=t,
                             end=moon.get("sets") or t + 3600, head=phase,
                             stats=[("%d°" % moon["el"], height(moon["el"], moon["az"]))] + lit,
@@ -1090,12 +1262,6 @@ def events(sky):
                             foot="Rises in the " + P.compass(moon["rise_az"]),
                             # The dome already says it when the Moon waits at the rim
                             next=None if ghost_moon(moon, t) else ("Moon rises", moon["rises"], True)))
-    # The coming full moon, for the Next line only: as a headline it would name something
-    # the dome can't show
-    fm = kept("fullmoon", t, None, 6 * 3600, lambda: next_full_moon(t + 86400), ends=lambda when: when)
-    if fm and fm > t + 86400:
-        evs.append(dict(kind="moon", wonder=3, start=fm, end=fm + 6 * 3600, head="Full moon", stats=[],
-                        next=("Full moon", fm, False), next_only=True))
     # Kept for the day; the words for when are worked out now, so they're never a day stale.
     # A night the forecast has under cloud just isn't mentioned
     for ev in shower_list(t):
@@ -1113,7 +1279,7 @@ def events(sky):
 
 
 def hero(sky):
-    """The headline and, below it, the most wonderful thing in the coming week."""
+    """The headline and, below it, Next and Up ahead."""
     t = sky["t"]
     evs = events(sky)
     # Ties: what you can see over what you can't (a balloon is a dot at best), the station
@@ -1123,11 +1289,20 @@ def hero(sky):
     best = max(heads, key=lambda ev: (score(ev, t), rank.get(ev["kind"], 0), -ev["start"])) if heads else None
     # A copy: the events are kept between frames, and this one's Next is only for now
     best = dict(best) if best and score(best, t) > 0 else dict(kind=None, head="Clear above", stats=[])
-    ahead = [ev for ev in evs if ev is not best and ev.get("next") and t < ev["start"]
-             and ev["start"] < t + (YEARLY_DAYS if ev.get("yearly") else NEXT_DAYS) * 86400
-             and not (ev["kind"] == best["kind"] and ev["start"] == best["start"])]
-    nxt = min(ahead, key=lambda ev: (-ev["wonder"], ev["start"]))["next"] if ahead else None
-    best["next"] = "%s %s" % (nxt[0], how_soon(nxt[1], t, nxt[2])) if nxt else None
+    # What's coming, as (wonder, when, words, timed, long term, a night's): the headline's
+    # own events, and the almanac's (a day's, like a solstice, only ever Up ahead)
+    coming = [(ev["wonder"], ev["next"][1], ev["next"][0], ev["next"][2], bool(ev.get("yearly")), True)
+              for ev in evs if ev.get("next") and t < ev["start"]
+              and not (ev["kind"] == best["kind"] and ev["start"] == best["start"])]
+    coming += [(w, at, label, False, True, night) for w, at, label, night in ahead_list(t)
+               if label != best["head"]]
+    soon = [c for c in coming if c[1] < t + NEXT_H * 3600 and c[5]]
+    nxt = min(soon, key=lambda c: (-c[0], c[1])) if soon else None
+    later = [c for c in coming if c[4] and t + NEXT_H * 3600 <= c[1] < t + AHEAD_DAYS * 86400
+             and not (nxt and c[2] == nxt[2])]
+    up = min(later, key=lambda c: (-c[0], c[1])) if later else None
+    best["next"] = (nxt[2], how_soon(nxt[1], t, nxt[3])) if nxt else None
+    best["ahead"] = (up[2], in_days(up[1], t)) if up else None
     return best
 
 
@@ -1256,6 +1431,13 @@ def draw_path(d, x, y, w, rise, sets, frac, rise_az, set_az, icon):
     return y + 40 + CAPS.size + 30
 
 
+YEAR_ROOM = 200   # the year's curve at its smallest, with its labels
+
+
+def year_span(sky):
+    return max(h for _, h in sky["year"]) - min(h for _, h in sky["year"])
+
+
 def draw_year(d, sky, x0, y, width, bottom):
     """Hours of daylight through the year, today on it: where the year stands between the
     solstices. As a sparkline marks its extremes: the longest day's value above the peak,
@@ -1314,17 +1496,9 @@ def draw_panel(d, sky):
 
     bottom = P.TEXT[3] - 10
     sky["baseline"] = bottom - 6
-    if h.get("next"):
-        # What's coming: the week's most wonderful thing, at the foot, on two lines if it must
-        line = "Next: " + h["next"]
-        f = P.fit_font(d, line, TF["name"], RUNG.size, width, floor=CAPS.size)
-        lines = [(line, f)] if P.text_w(d, line, f) <= width else \
-            P.wrap(d, line, TF["name"], RUNG.size, width, floor=CAPS.size)[:2]
-        for i, (ln, f) in enumerate(lines):
-            ly = bottom - (len(lines) - i) * (f.size + 8)
-            d.text((x0, ly), ln, font=f, fill=THING)
-            sky["baseline"] = ly + f.getmetrics()[0]
-        bottom -= len(lines) * (RUNG.size + 8) + 24
+    # The Sun's headline keeps room for the year's curve: Next and Up ahead take turns first
+    year = h["kind"] == "sun" and h["stats"] and year_span(sky) >= 1
+    bottom = draw_coming(d, sky, x0, width, y + (YEAR_ROOM if year else 0), bottom)
     if h["kind"] == "sun" and h["stats"]:
         draw_year(d, sky, x0, y + 20, width, bottom)
         return
@@ -1350,6 +1524,57 @@ def draw_panel(d, sky):
         nw = P.text_w(d, name, RUNG)
         d.text((lx + nw + 14, ly + RUNG.size - KM.size - 1), P.fit(d, fmt_km(km), KM, x1 - lx - nw - 14),
                font=KM, fill=SOFT)
+
+
+def draw_coming(d, sky, x0, width, top, bottom):
+    """Next and Up ahead at the foot of the panel, short term above long. Both when they
+    fit; when they don't, one at a time, turning over every 10 minutes, on redraws the
+    frame makes anyway; while something crosses the sky, only Next. Returns the new bottom."""
+    h = sky["hero"]
+    blocks = []
+    for label, said in (("Next", h.get("next")), ("Up ahead", h.get("ahead"))):
+        if said:
+            blocks.append((label, coming_lines(d, label, said[0], said[1], width)))
+    gap = 16
+    need = sum(len(lines) * (RUNG.size + 8) for _, lines in blocks) + gap * (len(blocks) - 1)
+    if len(blocks) == 2 and (live(sky) or need > bottom - top - 40):
+        blocks = blocks[:1] if live(sky) else [blocks[int(sky["t"] // 600) % 2]]
+    y = bottom
+    for label, lines in reversed(blocks):
+        for i, (ln, f) in enumerate(reversed(lines)):
+            y -= f.size + 8
+            if i == len(lines) - 1 and ln.startswith(label):
+                # The label a step down, so what's coming reads first
+                d.text((x0, y), label, font=f, fill=SOFT)
+                d.text((x0 + P.text_w(d, label, f), y), ln[len(label):], font=f, fill=THING)
+            else:
+                d.text((x0, y), ln, font=f, fill=THING)
+            if i == 0 and label == blocks[-1][0]:
+                sky["baseline"] = y + f.getmetrics()[0]
+        y -= gap
+    return y - 8 if blocks else bottom
+
+
+def coming_lines(d, label, what, when, width):
+    """One line if it fits at 34 px or more ("Next: ISS 8:49 tonight"). Else two, never
+    breaking inside what or when: what beside the label and when below it ("Next: ISS
+    overhead / 8:01 this evening"), or when beside the label and what below it ("Up ahead in
+    9 days: / Saturn at its brightest"), whichever fits bigger."""
+    def fit(*lines):
+        f = P.fit_font(d, max(lines, key=lambda ln: P.text_w(d, ln, P.font(TF["name"], RUNG.size))),
+                       TF["name"], RUNG.size, width, floor=CAPS.size)
+        return [(ln, f) for ln in lines] if all(P.text_w(d, ln, f) <= width for ln in lines) else None
+    one = fit("%s: %s %s" % (label, what, when))
+    two = [lines for lines in (fit("%s: %s" % (label, what), when), fit("%s %s:" % (label, when), what)) if lines]
+    return one or (max(two, key=lambda lines: lines[0][1].size) if two else
+                   P.wrap(d, "%s: %s %s" % (label, what, when), TF["name"], RUNG.size, width, floor=CAPS.size)[:2])
+
+
+def live(sky):
+    """A pass or a train crossing right now."""
+    t, tr = sky["t"], sky.get("train")
+    return any(ps["rise"] <= t <= ps["set"] for _, ps in sky.get("passes", [])) or \
+        bool(tr and tr["start"] <= t <= tr["end"])
 
 
 def render(data, t, note=None):
@@ -1674,9 +1899,7 @@ class Frame:
     def mood(self, now):
         """Live while a pass or train crosses; soon when the headline is something on its way
         within the half hour; otherwise calm."""
-        tr = self.sky.get("train")
-        if any(ps["rise"] <= now <= ps["set"] for _, ps in self.sky.get("passes", [])) or \
-                (tr and tr["start"] <= now <= tr["end"]):
+        if live(dict(self.sky, t=now)):
             return "live"
         h = self.sky.get("hero", {})
         return "soon" if "wonder" in h and 0 < h["start"] - now <= 1800 else "calm"
@@ -1692,7 +1915,8 @@ class Frame:
 
         def coarse(v):
             return "%d°" % (5 * round(int(v[:-1]) / 5.0)) if v.endswith("°") and v[:-1].lstrip("-").isdigit() else v
-        return (moment, tuple((coarse(v), lab) for v, lab in h.get("stats", [])), h.get("foot"), h.get("next"),
+        return (moment, tuple((coarse(v), lab) for v, lab in h.get("stats", [])), h.get("foot"),
+                (h.get("next"), h.get("ahead")),
                 tuple(sorted(th["kind"] + th["name"] for th in self.sky["things"] if not th.get("below"))),
                 bool(self.sky.get("train")), tuple(ps["rise"] for _, ps in self.sky.get("passes", [])
                                                    if ps["rise"] <= self.sky["t"] + 3600))

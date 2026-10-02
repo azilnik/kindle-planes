@@ -15,9 +15,11 @@ that way, and your left is on the left. It's white on black, day and night.
 - **The ISS and China's Tiangong station,** with the path of the next pass you can see
 - **The newest Starlink launch,** while its satellites still cross the sky in a line
 - **Weather balloons** from the nearest launch site, with a side view of the climb that
-  shows where the wind turns, and **pico balloons**, the small ham-radio balloons that
-  float for weeks and sometimes circle the world
+  shows where the wind turns, and **hobby balloons** (pico balloons), the small ones radio
+  hobbyists send up, which float for weeks and sometimes circle the world
 - **The Moon** in its phase, and **Venus, Mars, Jupiter and Saturn**
+- **What's coming**: tonight's best thing, and the best of the next two months, like an
+  eclipse of the Moon, a meteor shower or Jupiter at its brightest
 - **Meteor showers** on their peak nights, at the rate you'd really see from home, with
   the radiant (where the streaks come from) on the dome
 - After dark, the brighter stars
@@ -29,9 +31,10 @@ time and a wonder from 1 to 5:
 
 | Wonder | Events |
 |---|---|
-| 4 | An ISS pass 60° up or more, a Starlink train, a meteor shower you'd see 20 an hour of, a pico balloon that's been up a week |
-| 3 | An ISS pass 25° to 60° up, a Tiangong pass 60° up, a weather or pico balloon in the sky, the full moon, a shower of 10 to 20 an hour, the midnight sun and polar night |
-| 2 | Lower passes, the Moon up at night, daylight, a shower of 5 to 10 an hour (on the Next line only) |
+| 5 | A deep eclipse of the Moon you can see from home |
+| 4 | An ISS pass 60° up or more, a Starlink train, a meteor shower you'd see 20 an hour of, a hobby balloon that's been up a week, a shallower eclipse of the Moon |
+| 3 | An ISS pass 25° to 60° up, a Tiangong pass 60° up, a weather or hobby balloon in the sky, the full moon, a supermoon or blue moon, a shower of 10 to 20 an hour, a planet at its brightest, the Moon close to Venus or Jupiter, the midnight sun and polar night |
+| 2 | Lower passes, the Moon up at night, daylight, a full moon by its old name, a shower of 5 to 10 an hour, the first day of a season |
 | 1 | Sunrise, the Moon low in the haze under 10° |
 
 Ties go to what you can see: a station, then a train or a shower, then the Moon and Sun,
@@ -42,10 +45,31 @@ off it is, and the bigger it is, the earlier it starts to count: a sunrise matte
 last half hour, a great ISS pass takes the afternoon before, a big meteor shower the day
 before. There's no rotation and no randomness: the same sky always gives the same screen.
 
-The last line, *Next*, is the most wonderful thing coming up, and how soon: *ISS 8:49
-tonight*, *Full moon in 4 days*. It looks a week ahead, and a month ahead for what comes
-once a year or less, like the meteor showers: *Orionids in 20 days*. The coming full moon
-only ever shows here: as a headline it would name something the dome can't show.
+## Next and Up ahead
+
+At the foot of the panel, two lines look forward, one short and one long:
+
+- *Next* is the best thing in the coming two days, and when: *ISS 8:49 tonight*, *Moon
+  close to Jupiter late tonight*.
+- *Up ahead* is the best thing after that, out to two months: *Up ahead in 8 days: Saturn
+  at its brightest*. Past three weeks it counts in weeks, so it doesn't change every day.
+
+Up ahead comes from an almanac the Kindle works out once a day, with no network: meteor
+showers, full moons by their old names (the Harvest Moon, the Hunter's Moon) and the
+special ones (a supermoon, a blue moon), eclipses of the Moon you can see from home,
+Mars, Jupiter and Saturn at their brightest, Venus at its highest, the Moon passing close
+to Venus or Jupiter, and the turns of the seasons, said as what's good about them
+(*Longest day of the year*, *Days start getting longer*). Eclipses are only ever "of the
+Moon": the formulas can't tell a total eclipse from a deep partial one reliably, so the
+frame never promises which.
+
+Both lines show when they fit. When the panel is full (a pass, a balloon, the Sun's year
+curve), they take turns every 10 minutes, on redraws the frame makes anyway, and while
+something crosses the sky only Next shows. Neither repeats the headline or each other, and
+a coming full moon never leads: as a headline it would name something the dome can't show.
+
+Everything on the screen is in plain words: *Jupiter at its brightest*, not opposition;
+*Half moon*, not first quarter; *Geminid meteors*, not just Geminids.
 
 Times never use a 24-hour clock. A big time has its when in words under it (*TONIGHT*,
 *LATE TONIGHT*, *TOMORROW MORNING*), which also says am or pm; any other time carries a
@@ -84,7 +108,7 @@ display.
   Kindle keeps them in `orbits.csv`, so a day without network still shows them.
 - Balloons: [SondeHub](https://sondehub.org). In the hours after the weather balloon
   launches at 00:00 and 12:00 UTC, every 15 minutes until one is up, then every 5 to draw
-  its climb (every minute on a charger). Otherwise every 3 hours, for off-schedule flights and pico balloons.
+  its climb (every minute on a charger). Otherwise every 3 hours, for off-schedule flights and hobby balloons.
 - Cloud cover: [Open-Meteo](https://open-meteo.com), only on meteor shower nights (from
   the morning before, every 6 hours), a few times a year.
 - The Sun, Moon, planets, stars and meteor showers are worked out on the Kindle, with no

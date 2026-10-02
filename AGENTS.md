@@ -115,6 +115,8 @@ launch since mid-2026 is past it.
 ## Style rules
 
 - Comments say why, not what. Delete code instead of commenting it out.
+- Words on the screen are plain, for anyone in the kitchen: "Jupiter at its brightest",
+  never "opposition"; "Half moon", not "first quarter"; "Hobby balloon", not "pico".
 - `ruff check planes tools insert` must pass (`ruff.toml`).
 - Styles: `bold-right` is the default and what the photos show. `bold` mirrors it,
   `bold-traffic` adds the day's chart, `detailed` is the dense original.

@@ -60,6 +60,16 @@ def sun(t):
 
 def moon(t):
     """(ra, dec, distance km, illuminated fraction, waxing)."""
+    lam, beta, dist = moon_ecliptic(t)
+    T = (jd(t) - 2451545.0) / 36525
+    ra, dec = _ecl_to_eq(lam, beta, 23.439 - 0.013 * T)
+    elong = (lam - sun(t)[2]) % 360
+    return ra, dec, dist, (1 - math.cos(elong * D)) / 2, elong < 180
+
+
+def moon_ecliptic(t):
+    """(longitude, latitude, distance km) along the Sun's yearly path: the latitude is how far
+    the Moon passes from Earth's shadow at a full moon, so whether there's an eclipse."""
     T = (jd(t) - 2451545.0) / 36525
 
     def s(a, b):
@@ -74,9 +84,7 @@ def moon(t):
     beta = 5.13 * s(93.3, 483202.02) + 0.28 * s(228.2, 960400.89) - 0.28 * s(318.3, 6003.15) - 0.17 * s(217.6, -407332.21)
     par = (0.9508 + 0.0518 * c(134.9, 477198.85) + 0.0095 * c(259.2, -413335.38)
            + 0.0078 * c(235.7, 890534.23) + 0.0028 * c(269.9, 954397.70))
-    ra, dec = _ecl_to_eq(lam, beta, 23.439 - 0.013 * T)
-    elong = (lam - sun(t)[2]) % 360
-    return ra, dec, R_EARTH / math.sin(par * D), (1 - math.cos(elong * D)) / 2, elong < 180
+    return lam % 360, beta, R_EARTH / math.sin(par * D)
 
 
 def moon_alt_az(t, lat, lon):
