@@ -44,6 +44,10 @@ HOLD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "HOLD")
 # PW4: a ROHM BD71827 power chip. PW2: a Maxim MAX77696. Same files, different names
 BAT = _find("/sys/class/power_supply/*_bat", _find("/sys/class/power_supply/*-battery", ""))
 AC_ONLINE = _find("/sys/class/power_supply/*_ac", _find("/sys/class/power_supply/*-charger", "")) + "/online"
+# The MAX77696's charger "online" can stick at 1 after the power goes away: a PW2 sat
+# "charging" on battery for hours, light on and never suspending. Its USB controller's
+# VBUS reading is the truth. A PW4 has no such file and trusts "online"
+VBUS = _find("/sys/class/power_supply/*-uic/device/vbvolt", "")
 BACKLIGHT = _find("/sys/class/backlight/*", "/sys/class/backlight/bl") + "/brightness"
 # build/install-ssh-dropbear.sh's starter; it exits at once if dropbear is already up
 SSH_START = "/var/local/ssh/start.sh"
@@ -123,7 +127,7 @@ def set_frontlight(level):
 
 
 def on_ac():
-    return KINDLE and _read(AC_ONLINE) == "1"
+    return KINDLE and _read(AC_ONLINE) == "1" and (not VBUS or _read(VBUS) == "1")
 
 
 def restart_wifid():
@@ -184,7 +188,7 @@ def battery():
     if not KINDLE:
         return None
     return (_read(BAT + "/capacity"), _read(BAT + "/charge_now"),
-            _read(BAT + "/current_avg"), _read(AC_ONLINE))
+            _read(BAT + "/current_avg"), "1" if on_ac() else "0")
 
 
 def log(event, **fields):
