@@ -69,7 +69,7 @@ rule and already has its margin; its frames are pixel-identical either way.
 - `tools/deploy.sh --hold` leaves the Kindle awake with Wi-Fi on. Remove
   `/mnt/us/planes/HOLD` when done, or the battery drains.
 - Runtime files stay on the device and are gitignored: `cache.json`, `traffic.json`,
-  `tracks.json`, `power.log`.
+  `tracks.json`, `power.log`, `ssh.log`.
 - `tools/grid.sh` shows the test pattern for measuring `safe` and stops the loop to do it.
   Always finish with `tools/grid.sh done`, or the Kindle stays awake on the pattern.
 - After a visual change, show a screenshot: `tools/fbshot.sh` reads the framebuffer.

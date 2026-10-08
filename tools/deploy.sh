@@ -17,7 +17,7 @@ if ! ssh -o ConnectTimeout=3 "$KINDLE" true 2>/dev/null; then
     sleep 4
 fi
 # config.json and the files written at runtime stay on the device
-COPYFILE_DISABLE=1 tar cf - --exclude cache.json --exclude traffic.json --exclude 'tracks.json*' --exclude 'power.log*' \
+COPYFILE_DISABLE=1 tar cf - --exclude cache.json --exclude traffic.json --exclude 'tracks.json*' --exclude 'power.log*' --exclude ssh.log \
     --exclude __pycache__ --exclude samples --exclude 'config*.json' --exclude HOLD . |
     ssh "$KINDLE" 'cd /mnt/us/planes && tar xf -'
 if [ "$KEEP_HOLD" = "--hold" ]; then

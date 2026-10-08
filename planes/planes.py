@@ -142,6 +142,7 @@ FULL_REFRESH_S = 1800     # a full e-ink flash this often to clear ghosting
 # Night: one constellation of the day's traffic, Wi-Fi off, no redraws until morning
 NIGHT = ("23:00", "07:00")
 NIGHT_WAKE_S = 1800       # brief no-op wakes so no single suspend runs for hours
+REFUSED_REBOOT_S = 1200   # suspend refused this long in a row: reboot, as for a dead link
 FRONTLIGHT = 3            # level (0-24) while on a charger; suspend kills it, so dark on battery
 # Near empty: park on the constellation, since e-ink keeps the last image once the battery
 # dies; come back to live data when charging or recovered past LOW_BATTERY_RESUME
@@ -1342,7 +1343,9 @@ def main():
     raw, routes, frames = [], {}, {}
     fetched_at = next_fetch = last_full = 0.0
     failures = 0
+    refused_since = 0.0
     last_style = STYLE
+    power.start_ssh()
     while True:
         load_config(args)
         restyled, last_style = last_style != STYLE, STYLE
@@ -1368,6 +1371,7 @@ def main():
             woke = power.sleep_until(now + NIGHT_WAKE_S if low else min(now + NIGHT_WAKE_S, next_morning(now)),
                                      suspend=suspend)
             power.log("wake", how=woke, night=1)
+            refused_since = check_refused(woke, refused_since)
             next_fetch = 0  # fetch straight away when morning comes
             last_full = 0
             continue
@@ -1402,6 +1406,7 @@ def main():
             except (requests.RequestException, ValueError) as e:
                 failures += 1
                 print("fetch failed (%d): %r" % (failures, e), file=sys.stderr, flush=True)
+            power.start_ssh()
             if POWER.get("wifi_toggle"):
                 power.wifi_down()
             if failures:
@@ -1456,12 +1461,26 @@ def main():
             open(power.HOLD, "w").close()
             hold_started = time.time()
             hold_until = hold_started + 600
+            power.start_ssh()
             power.wifi_up()
             power.log("button_hold")
         if hold_until and time.time() > hold_until and os.path.exists(power.HOLD):
             os.remove(power.HOLD)
             hold_until = 0
         power.log("wake", how=woke)
+        refused_since = check_refused(woke, refused_since)
+
+
+def check_refused(woke, since):
+    """When the refusals started, or 0. Reboots once they've gone on too long."""
+    if woke != "refused":
+        return 0.0
+    if not since:
+        return time.time()
+    if time.time() - since > REFUSED_REBOOT_S:
+        power.reboot()
+    return since
+
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -7,9 +7,11 @@ been verified on the device:
     {"wifi_toggle": true, "governor": "powersave", "suspend": false}
 """
 
+import errno
 import glob
 import os
 import select
+import socket
 import struct
 import subprocess
 import time
@@ -42,7 +44,14 @@ HOLD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "HOLD")
 # PW4: a ROHM BD71827 power chip. PW2: a Maxim MAX77696. Same files, different names
 BAT = _find("/sys/class/power_supply/*_bat", _find("/sys/class/power_supply/*-battery", ""))
 AC_ONLINE = _find("/sys/class/power_supply/*_ac", _find("/sys/class/power_supply/*-charger", "")) + "/online"
+# The MAX77696's charger "online" can stick at 1 after the power goes away: a PW2 sat
+# "charging" on battery for hours, light on and never suspending. Its USB controller's
+# VBUS reading is the truth. A PW4 has no such file and trusts "online"
+VBUS = _find("/sys/class/power_supply/*-uic/device/vbvolt", "")
 BACKLIGHT = _find("/sys/class/backlight/*", "/sys/class/backlight/bl") + "/brightness"
+# build/install-ssh-dropbear.sh's starter; it exits at once if dropbear is already up
+SSH_START = "/var/local/ssh/start.sh"
+SSH_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ssh.log")
 LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "power.log")
 LOG_MAX = 256 * 1024
 # Both report KEY_POWER on a PW4 (SoC SNVS and the BD71827 PMIC); watch both. On a PW2
@@ -118,13 +127,37 @@ def set_frontlight(level):
 
 
 def on_ac():
-    return KINDLE and _read(AC_ONLINE) == "1"
+    return KINDLE and _read(AC_ONLINE) == "1" and (not VBUS or _read(VBUS) == "1")
 
 
 def restart_wifid():
     """Heavier than a radio cycle: restart the connection manager itself."""
     if KINDLE:
         subprocess.call(["restart", "wifid"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def start_ssh():
+    """Start SSH unless something already answers on port 22. The boot job can race the
+    Kindle UI it stops and leave it down, so the loop checks at launch, every fetch and on a
+    button press. start.sh's own check (any dropbearmulti process) passes for a stuck one,
+    hence the kill. A no-op where SSH is USBNetLite (a PW4): no start.sh of its own here."""
+    if not KINDLE or not os.path.exists(SSH_START) or _listening(22):
+        return
+    subprocess.call(["killall", "dropbearmulti"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # To a file, not a pipe: dropbear forks into the background holding whatever it was given
+    with open(SSH_LOG, "w") as out:
+        rc = subprocess.call(["sh", "-x", SSH_START], stdout=out, stderr=out)
+    time.sleep(1)
+    log("ssh_start", rc=rc, up=int(_listening(22)))
+
+
+def _listening(port):
+    s = socket.socket()
+    s.settimeout(1)
+    try:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+    finally:
+        s.close()
 
 
 def reboot():
@@ -155,7 +188,7 @@ def battery():
     if not KINDLE:
         return None
     return (_read(BAT + "/capacity"), _read(BAT + "/charge_now"),
-            _read(BAT + "/current_avg"), _read(AC_ONLINE))
+            _read(BAT + "/current_avg"), "1" if on_ac() else "0")
 
 
 def log(event, **fields):
@@ -182,7 +215,8 @@ def log(event, **fields):
 
 def sleep_until(when, suspend=False):
     """Idle until `when` (epoch). With suspend on, the Kindle deep-sleeps and the RTC
-    alarm wakes it. Returns "rtc", "button" (woke early: someone pressed power) or "idle"."""
+    alarm wakes it. Returns "rtc", "button" (woke early: someone pressed power), "idle", or
+    "refused" when the kernel wouldn't suspend and it waited awake instead."""
     left = when - time.time()
     if left <= 0:
         return "idle"
@@ -229,22 +263,30 @@ def _suspend(when):
             f.write("+%d" % seconds)
         with open(WAKEALARM) as f:
             armed = f.read().strip()
-    except OSError:
-        armed = ""
+        err = "" if armed else "unarmed"
+    except OSError as e:
+        armed, err = "", errno.errorcode.get(e.errno, e.errno)
     if not armed:
         # Never suspend without a wake-up armed: that sleeps until someone presses power
-        time.sleep(max(0, when - time.time()))
-        return "idle"
+        log("suspend_refused", step="alarm", err=err)
+        return _refused(when)
     os.sync()
     try:
         with open("/sys/power/state", "w") as f:
             f.write("mem")  # blocks until resume
-    except OSError:
-        time.sleep(max(0, when - time.time()))
-        return "idle"
+    except OSError as e:
+        # A PW2 once stopped suspending after a wifid restart and sat awake at ~25 mA until
+        # the battery died, without a word in the log. Say why; the loop reboots if it lasts
+        log("suspend_refused", step="mem", err=errno.errorcode.get(e.errno, e.errno))
+        return _refused(when)
     if time.time() >= when - 5:
         # The alarm has one-second resolution and tends to fire just early; wait out the
         # remainder here so the loop doesn't draw the same minute twice
         time.sleep(max(0, when - time.time()))
         return "rtc"
     return "button"
+
+
+def _refused(when):
+    # Awake, but still listening for the power button
+    return "button" if _wait_awake(when) == "button" else "refused"
