@@ -3,6 +3,7 @@ planes/cache.json
 planes/traffic.json
 planes/tracks.json*
 planes/power.log*
+planes/ssh.log
 planes/HOLD
 planes/DISABLED
 planes/measure_start

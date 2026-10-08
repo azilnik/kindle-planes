@@ -11,6 +11,7 @@ import errno
 import glob
 import os
 import select
+import socket
 import struct
 import subprocess
 import time
@@ -46,6 +47,7 @@ AC_ONLINE = _find("/sys/class/power_supply/*_ac", _find("/sys/class/power_supply
 BACKLIGHT = _find("/sys/class/backlight/*", "/sys/class/backlight/bl") + "/brightness"
 # build/install-ssh-dropbear.sh's starter; it exits at once if dropbear is already up
 SSH_START = "/var/local/ssh/start.sh"
+SSH_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ssh.log")
 LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "power.log")
 LOG_MAX = 256 * 1024
 # Both report KEY_POWER on a PW4 (SoC SNVS and the BD71827 PMIC); watch both. On a PW2
@@ -131,11 +133,27 @@ def restart_wifid():
 
 
 def start_ssh():
-    """Start SSH if it isn't running. The boot job can race the Kindle UI it stops and leave
-    it down, and a button press must always get you in. A no-op where SSH is USBNetLite
-    (a PW4), which has no start.sh of its own here."""
-    if KINDLE and os.path.exists(SSH_START):
-        subprocess.call(["sh", SSH_START], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """Start SSH unless something already answers on port 22. The boot job can race the
+    Kindle UI it stops and leave it down, so the loop checks at launch, every fetch and on a
+    button press. start.sh's own check (any dropbearmulti process) passes for a stuck one,
+    hence the kill. A no-op where SSH is USBNetLite (a PW4): no start.sh of its own here."""
+    if not KINDLE or not os.path.exists(SSH_START) or _listening(22):
+        return
+    subprocess.call(["killall", "dropbearmulti"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # To a file, not a pipe: dropbear forks into the background holding whatever it was given
+    with open(SSH_LOG, "w") as out:
+        rc = subprocess.call(["sh", "-x", SSH_START], stdout=out, stderr=out)
+    time.sleep(1)
+    log("ssh_start", rc=rc, up=int(_listening(22)))
+
+
+def _listening(port):
+    s = socket.socket()
+    s.settimeout(1)
+    try:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+    finally:
+        s.close()
 
 
 def reboot():

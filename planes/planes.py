@@ -1406,6 +1406,7 @@ def main():
             except (requests.RequestException, ValueError) as e:
                 failures += 1
                 print("fetch failed (%d): %r" % (failures, e), file=sys.stderr, flush=True)
+            power.start_ssh()
             if POWER.get("wifi_toggle"):
                 power.wifi_down()
             if failures:
