@@ -11,6 +11,10 @@ At night it draws the whole day's traffic as one picture.
 
 Everything runs on the Kindle. Your computer is only needed to install it.
 
+Its successor on the same hardware, [kindle-sky](https://github.com/azilnik/kindle-sky), shows
+what's in the sky above your home instead, and lasts about 13 days a charge. This project is
+finished; device fixes are made there.
+
 ## What you need
 
 - A Kindle Paperwhite 4 (2018) or Paperwhite 2 (2013) that you can jailbreak
